@@ -25,15 +25,286 @@
         - EN 1992-1-1 (Eurocode 2)
 """
 
-__all__ = ['SecMatRC']
+__all__ = ['SecMatRC', 'RebarSet', 'EXPOSURE_CLASSES', 'STRUCTURAL_CLASSES',
+           'CNOM_MIN_TABLE', 'REBAR_AREAS']
 
-from typing import Optional, TypeVar
-from formula import FormulaResult
+from typing import Optional, TypeVar, List, Tuple
+from dataclasses import dataclass, field
+import math
 
 section = TypeVar('section')
 material_concrete = TypeVar('material_concrete')
 material_reinforcement = TypeVar('material_reinforcement')
 
+
+# =============================================================================
+# Tableaux réglementaires
+# =============================================================================
+
+# --- Diamètres nominaux courants et aires unitaires (mm²) ---
+# Référence : barres HA selon NF A 35-080
+REBAR_AREAS: dict[int, float] = {
+    6:   28.27,    #  π/4 ×  6² =  28.27 mm²
+    8:   50.27,    #  π/4 ×  8² =  50.27 mm²
+    10:  78.54,    #  π/4 × 10² =  78.54 mm²
+    12: 113.10,    #  π/4 × 12² = 113.10 mm²
+    14: 153.94,    #  π/4 × 14² = 153.94 mm²
+    16: 201.06,    #  π/4 × 16² = 201.06 mm²
+    20: 314.16,    #  π/4 × 20² = 314.16 mm²
+    25: 490.87,    #  π/4 × 25² = 490.87 mm²
+    32: 804.25,    #  π/4 × 32² = 804.25 mm²
+    40: 1256.64,   #  π/4 × 40² = 1256.64 mm²
+}
+
+
+# --- Classes d'exposition (EC2 Tableau 4.1) ---
+# Clé : classe d'exposition
+# Valeur : (description courte, description détaillée, exemples)
+EXPOSURE_CLASSES: dict[str, dict] = {
+    # ---- Aucun risque de corrosion ----
+    "X0": {
+        "risk": "Aucun risque",
+        "description": "Béton non armé sans risque de corrosion ou d'attaque",
+        "examples": "Béton non armé à l'intérieur de bâtiments, "
+                     "fondations non armées sans gel",
+    },
+
+    # ---- Corrosion induite par carbonatation ----
+    "XC1": {
+        "risk": "Carbonatation",
+        "description": "Sec ou humide en permanence",
+        "examples": "Intérieur de bâtiments à faible taux d'humidité, "
+                     "béton submergé en permanence",
+    },
+    "XC2": {
+        "risk": "Carbonatation",
+        "description": "Humide, rarement sec",
+        "examples": "Fondations, surfaces en contact prolongé avec l'eau",
+    },
+    "XC3": {
+        "risk": "Carbonatation",
+        "description": "Humidité modérée",
+        "examples": "Intérieur de bâtiments à humidité modérée ou élevée, "
+                     "extérieur abrité de la pluie",
+    },
+    "XC4": {
+        "risk": "Carbonatation",
+        "description": "Alternance d'humidité et de séchage",
+        "examples": "Surfaces extérieures soumises à la pluie",
+    },
+
+    # ---- Corrosion induite par les chlorures (hors eau de mer) ----
+    "XD1": {
+        "risk": "Chlorures (hors mer)",
+        "description": "Humidité modérée",
+        "examples": "Surfaces exposées à des chlorures transportés par l'air",
+    },
+    "XD2": {
+        "risk": "Chlorures (hors mer)",
+        "description": "Humide, rarement sec",
+        "examples": "Piscines, éléments exposés aux eaux industrielles "
+                     "contenant des chlorures",
+    },
+    "XD3": {
+        "risk": "Chlorures (hors mer)",
+        "description": "Alternance d'humidité et de séchage",
+        "examples": "Parties de ponts, dalles de parking exposées aux "
+                     "sels de déverglaçage",
+    },
+
+    # ---- Corrosion induite par les chlorures d'eau de mer ----
+    "XS1": {
+        "risk": "Chlorures (mer)",
+        "description": "Air marin, sans contact direct",
+        "examples": "Structures proches du littoral (> zone d'éclaboussement)",
+    },
+    "XS2": {
+        "risk": "Chlorures (mer)",
+        "description": "Submergé en permanence",
+        "examples": "Éléments de structures maritimes immergés en permanence",
+    },
+    "XS3": {
+        "risk": "Chlorures (mer)",
+        "description": "Zones de marnage et d'éclaboussement",
+        "examples": "Quais, piles de ponts en zone de marnage",
+    },
+
+    # ---- Attaque gel/dégel ----
+    "XF1": {
+        "risk": "Gel/dégel",
+        "description": "Saturation modérée sans agent de déverglaçage",
+        "examples": "Surfaces verticales exposées à la pluie et au gel",
+    },
+    "XF2": {
+        "risk": "Gel/dégel",
+        "description": "Saturation modérée avec agents de déverglaçage",
+        "examples": "Surfaces verticales de structures routières "
+                     "exposées au gel et au sel",
+    },
+    "XF3": {
+        "risk": "Gel/dégel",
+        "description": "Forte saturation sans agent de déverglaçage",
+        "examples": "Surfaces horizontales exposées à la pluie et au gel",
+    },
+    "XF4": {
+        "risk": "Gel/dégel",
+        "description": "Forte saturation avec agents de déverglaçage",
+        "examples": "Routes et tabliers de ponts exposés aux sels, "
+                     "surfaces soumises aux embruns et au gel",
+    },
+
+    # ---- Attaques chimiques ----
+    "XA1": {
+        "risk": "Attaque chimique",
+        "description": "Environnement à faible agressivité chimique",
+        "examples": "Sols naturels, eaux souterraines faiblement agressives",
+    },
+    "XA2": {
+        "risk": "Attaque chimique",
+        "description": "Environnement à agressivité chimique modérée",
+        "examples": "Sols et eaux souterraines modérément agressifs, "
+                     "contact avec des eaux industrielles",
+    },
+    "XA3": {
+        "risk": "Attaque chimique",
+        "description": "Environnement à forte agressivité chimique",
+        "examples": "Sols et eaux très agressifs, eaux industrielles "
+                     "fortement acides ou sulfatées",
+    },
+}
+
+
+# --- Classes structurales (EC2 §4.4.1.2) ---
+# La classe structurale de base est S4 (durée d'utilisation 50 ans)
+# On peut ajuster de S1 à S6 selon les critères du tableau 4.3N
+STRUCTURAL_CLASSES: dict[str, dict] = {
+    "S1": {
+        "lifetime": "≤ 10 ans",
+        "description": "Structures temporaires",
+        "examples": "Coffrages, structures provisoires de chantier",
+    },
+    "S2": {
+        "lifetime": "≤ 25 ans",
+        "description": "Éléments remplaçables",
+        "examples": "Éléments structuraux remplaçables (appareils d'appui)",
+    },
+    "S3": {
+        "lifetime": "≤ 50 ans",
+        "description": "Classe réduite (conditions favorables)",
+        "examples": "Bâtiments courants avec béton ≥ C35/45 vs classe "
+                     "d'exposition, ou dalles/membrures ≥ 80 mm",
+    },
+    "S4": {
+        "lifetime": "50 ans",
+        "description": "Classe de référence (défaut)",
+        "examples": "Bâtiments courants, structures de génie civil courantes",
+    },
+    "S5": {
+        "lifetime": "≤ 100 ans",
+        "description": "Classe augmentée",
+        "examples": "Structures avec durée de vie requise > 50 ans, "
+                     "ou exigences de qualité accrues",
+    },
+    "S6": {
+        "lifetime": "> 100 ans",
+        "description": "Classe très élevée",
+        "examples": "Ouvrages d'art monumentaux, tunnels à très longue durée",
+    },
+}
+
+
+# --- Enrobage minimal cmin,dur (mm) EC2 Tableau 4.4N ---
+# Lignes = classe structurale, Colonnes = classe d'exposition
+# Note : les valeurs dépendent de l'annexe nationale, celles-ci sont les
+# valeurs recommandées par l'EC2.
+CNOM_MIN_TABLE: dict[str, dict[str, int]] = {
+    #           X0  XC1  XC2  XC3  XC4  XD1  XD2  XD3  XS1  XS2  XS3
+    "S1":  {"X0": 10, "XC1": 10, "XC2": 10, "XC3": 10, "XC4": 15,
+            "XD1": 20, "XD2": 25, "XD3": 30, "XS1": 20, "XS2": 25, "XS3": 30},
+    "S2":  {"X0": 10, "XC1": 10, "XC2": 15, "XC3": 20, "XC4": 20,
+            "XD1": 25, "XD2": 30, "XD3": 35, "XS1": 25, "XS2": 30, "XS3": 35},
+    "S3":  {"X0": 10, "XC1": 10, "XC2": 20, "XC3": 20, "XC4": 25,
+            "XD1": 30, "XD2": 35, "XD3": 40, "XS1": 30, "XS2": 35, "XS3": 40},
+    "S4":  {"X0": 10, "XC1": 15, "XC2": 25, "XC3": 25, "XC4": 30,
+            "XD1": 35, "XD2": 40, "XD3": 45, "XS1": 35, "XS2": 40, "XS3": 45},
+    "S5":  {"X0": 15, "XC1": 20, "XC2": 30, "XC3": 30, "XC4": 35,
+            "XD1": 40, "XD2": 45, "XD3": 50, "XS1": 40, "XS2": 45, "XS3": 50},
+    "S6":  {"X0": 20, "XC1": 25, "XC2": 35, "XC3": 35, "XC4": 40,
+            "XD1": 45, "XD2": 50, "XD3": 55, "XS1": 45, "XS2": 50, "XS3": 55},
+}
+
+
+# =============================================================================
+# Dataclass pour décrire un groupe de barres
+# =============================================================================
+
+@dataclass
+class RebarSet:
+    """
+    Décrit un groupe de barres d'armature identiques.
+
+    Peut être combiné en liste pour décrire une nappe :
+        [RebarSet(nb=2, phi=12), RebarSet(nb=2, phi=10)]  →  "2HA12+2HA10"
+
+    :param nb: Nombre de barres
+    :param phi: Diamètre nominal en mm
+    """
+    nb: int
+    phi: int
+
+    def __post_init__(self):
+        if self.phi not in REBAR_AREAS:
+            raise ValueError(
+                f"Diamètre HA{self.phi} inconnu. "
+                f"Diamètres disponibles : {list(REBAR_AREAS.keys())}"
+            )
+        if self.nb < 0:
+            raise ValueError("Le nombre de barres doit être ≥ 0")
+
+    @property
+    def area_unit(self) -> float:
+        """Aire d'une barre (mm²)."""
+        return REBAR_AREAS[self.phi]
+
+    @property
+    def area(self) -> float:
+        """Aire totale du groupe (mm²)."""
+        return self.nb * self.area_unit
+
+    @property
+    def area_cm2(self) -> float:
+        """Aire totale du groupe (cm²)."""
+        return self.area / 100.0
+
+    @property
+    def label(self) -> str:
+        """Label court : ex '2HA12'."""
+        return f"{self.nb}HA{self.phi}"
+
+    def __repr__(self) -> str:
+        return f"RebarSet({self.label} → {self.area_cm2:.2f} cm²)"
+
+
+def rebar_sets_total_area(sets: List[RebarSet]) -> float:
+    """Aire totale d'une liste de RebarSet (mm²)."""
+    return sum(s.area for s in sets)
+
+
+def rebar_sets_label(sets: List[RebarSet]) -> str:
+    """Label combiné : ex '2HA12+2HA10'."""
+    return "+".join(s.label for s in sets)
+
+
+def rebar_sets_phi_max(sets: List[RebarSet]) -> int:
+    """Diamètre max d'une liste de RebarSet (mm)."""
+    if not sets:
+        return 0
+    return max(s.phi for s in sets)
+
+
+# =============================================================================
+# Classe SecMatRC
+# =============================================================================
 
 class SecMatRC:
     """
@@ -43,15 +314,16 @@ class SecMatRC:
     armatures, inerties homogènes et fissurées) qui dépendent à la fois
     de la section et du matériau.
 
-    À l'initialisation, seules les valeurs par défaut (d ≈ 0.9h) sont
-    définies. Les autres propriétés sont renseignées au fur et à mesure
-    des calculs par l'utilisateur.
+    Les armatures peuvent être renseignées de deux façons :
+        - Par section directe : rc.ast = 6.28  (cm²)
+        - Par description de barres : rc.rebars_bottom = [RebarSet(2,12), RebarSet(2,10)]
+        → L'aire est alors calculée automatiquement.
+        → Si les deux sont renseignés, les RebarSet priment.
 
-    :param sec: Section géométrique (SecRectangular, SecCircular, etc.)
+    :param sec: Section géométrique
     :param mat_concrete: Matériau béton (MatConcrete)
     :param mat_reinforcement: Matériau acier d'armature (MatReinforcement)
-    :param phi_fluage: Coefficient de fluage φ(∞,t0) pour αe long terme
-                       (défaut None → non calculable)
+    :param phi_fluage: Coefficient de fluage φ(∞,t0) (défaut None)
     :param name: Nom optionnel
     """
 
@@ -60,399 +332,334 @@ class SecMatRC:
         sec: section,
         mat_concrete: material_concrete,
         mat_reinforcement: material_reinforcement,
-        phi_fluage: Optional[float] = None,
+        phi_fluage: Optional[float] = 3,
         name: Optional[str] = None,
     ) -> None:
 
-        # ----- Références aux objets de base -----
+        # --- Références aux objets de base ---
         self._sec = sec
         self._mat_c = mat_concrete
         self._mat_s = mat_reinforcement
         self._name = name or f"RC_{sec.__class__.__name__}"
 
-        # ----- Hauteur utile — valeur par défaut -----
+        # --- Géométrie de base ---
         self._h: float = sec.h
-        self._d: float = 0.9 * self._h          # Estimation initiale
-        self._d_prime: float = 0.1 * self._h     # Estimation initiale
+        self._d: Optional[float] = round(0.9 * self._h, 1)     # estimation initiale
+        self._d_prime: Optional[float] = round(0.1 * self._h, 1)
 
-        # ----- Bras de levier -----
-        self._z: Optional[float] = None          # Renseigné après calcul
+        # --- Enrobages et diamètres ---
+        self._cnom: Optional[float] = None          # mm, enrobage nominal
+        self._cnom_top: Optional[float] = None      # mm, enrobage nominal sup (si différent)
+        self._phi_l: Optional[int] = None           # mm, diamètre armatures longitudinales
+        self._phi_t: Optional[int] = None           # mm, diamètre armatures transversales
 
-        # ----- Armatures [mm²] -----
-        self._ast: Optional[float] = None        # Armatures tendues
-        self._asc: Optional[float] = None        # Armatures comprimées
-        self._asp: Optional[float] = None        # Armatures de précontrainte
-        self._asw: Optional[float] = None        # Armatures transversales
+        # --- Classe d'exposition et structurale ---
+        self._exposure_class: Optional[str] = None  # ex: "XC3"
+        self._structural_class: str = "S4"          # par défaut : 50 ans
 
-        # ----- Diamètres [mm] -----
-        self._phi_l: Optional[float] = None      # φ longitudinal max
-        self._phi_t: Optional[float] = None      # φ transversal
+        # --- Armatures tendues (bottom) ---
+        self._ast: Optional[float] = None           # cm², section d'acier tendu
+        self._rebars_bottom: Optional[List[RebarSet]] = None
 
-        # ----- Enrobages [mm] -----
-        self._cnom: Optional[float] = None       # Enrobage nominal
-        self._cmin: Optional[float] = None       # Enrobage minimal
-        self._delta_cdev: float = 10.0           # Tolérance exécution
+        # --- Armatures comprimées (top) ---
+        self._asc: Optional[float] = None           # cm², section d'acier comprimé
+        self._rebars_top: Optional[List[RebarSet]] = None
 
-        # ----- Espacements [mm] -----
-        self._ev: Optional[float] = None         # Espacement vertical
-        self._eh: Optional[float] = None         # Espacement horizontal
-        self._st: Optional[float] = None         # Espacement transversal
+        # --- Espacement ---
+        self._eh: Optional[float] = None            # mm, espacement horizontal
+        self._ev: Optional[float] = None            # mm, espacement vertical
 
-        # ----- Exposition / Classe structurale -----
-        self._exposure_class: Optional[str] = None    # ex. "XC1", "XD2"
-        self._structural_class: str = "S4"            # Défaut EC2
+        # --- Bras de levier ---
+        self._z: Optional[float] = None             # mm
 
-        # ----- Type d'acier -----
-        self._steel_kind: str = "HA"  # "HA" | "RL" | "PC"
-
-        # ----- Fluage -----
+        # --- Fluage ---
         self._phi_fluage: Optional[float] = phi_fluage
 
-        # ----- Inerties / axes neutres (calculés quand données dispo) -----
-        # Stockés en cache, invalidés par les setters
-        self._Ih: Optional[float] = None
-        self._Ic: Optional[float] = None
-        self._xh: Optional[float] = None
-        self._xc: Optional[float] = None
+        # --- Cache inerties ---
+        self._cache_valid: bool = False
+        self._Ih: Optional[float] = None    # mm⁴, inertie homogénéisée
+        self._Ic: Optional[float] = None    # mm⁴, inertie fissurée
+        self._xh: Optional[float] = None    # mm, AN section homogénéisée
+        self._xc: Optional[float] = None    # mm, AN section fissurée
 
-    # =========================================================================
-    # Invalidation du cache
-    # =========================================================================
-
-    def _invalidate_cache(self) -> None:
-        """Remet à None les valeurs calculées pour forcer le recalcul."""
-        self._Ih = None
-        self._Ic = None
-        self._xh = None
-        self._xc = None
-
-    # =========================================================================
-    # Propriétés en lecture seule — objets de base
-    # =========================================================================
+    # =================================================================
+    # Propriétés de base (lecture seule)
+    # =================================================================
 
     @property
-    def sec(self) -> section:
-        """Section géométrique associée."""
+    def sec(self):
+        """Section géométrique."""
         return self._sec
 
     @property
-    def mat_concrete(self) -> material_concrete:
-        """Matériau béton associé."""
+    def mat_concrete(self):
+        """Matériau béton."""
         return self._mat_c
 
     @property
-    def mat_reinforcement(self) -> material_reinforcement:
-        """Matériau armature associé."""
+    def mat_reinforcement(self):
+        """Matériau acier d'armature."""
         return self._mat_s
 
     @property
+    def name(self) -> str:
+        return self._name
+
+    @property
     def h(self) -> float:
-        """Hauteur totale de la section [mm]."""
         return self._h
 
-    # =========================================================================
-    # Coefficient d'équivalence — EC2
-    # =========================================================================
+    # =================================================================
+    # Hauteur utile d et d'
+    # =================================================================
 
     @property
-    def alpha_eq_short(self) -> float:
-        """
-        Coefficient d'équivalence court terme : αe = Es / Ecm.
-        """
-        return self._mat_s.Es / self._mat_c.Ecm
-
-    @property
-    def alpha_eq_short_report(self) -> FormulaResult:
-        return FormulaResult(
-            symbol="αe,ct",
-            formula="Es / Ecm",
-            formula_values=f"{self._mat_s.Es:.0f} / {self._mat_c.Ecm:.0f} = {self.alpha_eq_short:.2f}",
-            unit="-",
-            ref="EC2 — §5.4(2)",
-            value=self.alpha_eq_short,
-        )
-
-    @property
-    def alpha_eq_long(self) -> Optional[float]:
-        """
-        Coefficient d'équivalence long terme : αe = Es / (Ecm / (1 + φ)).
-
-        Retourne None si le coefficient de fluage n'est pas renseigné.
-        """
-        if self._phi_fluage is None:
-            return None
-        Ec_eff = self._mat_c.Ecm / (1 + self._phi_fluage)
-        return self._mat_s.Es / Ec_eff
-
-    @property
-    def alpha_eq_long_report(self) -> Optional[FormulaResult]:
-        if self._phi_fluage is None:
-            return None
-        Ec_eff = self._mat_c.Ecm / (1 + self._phi_fluage)
-        return FormulaResult(
-            symbol="αe,lt",
-            formula="Es / (Ecm / (1 + φ))",
-            formula_values=(
-                f"{self._mat_s.Es:.0f} / ({self._mat_c.Ecm:.0f} / "
-                f"(1 + {self._phi_fluage:.2f})) = "
-                f"{self._mat_s.Es:.0f} / {Ec_eff:.0f} = {self.alpha_eq_long:.2f}"
-            ),
-            unit="-",
-            ref="EC2 — §5.4(2)",
-            value=self.alpha_eq_long,
-        )
-
-    # =========================================================================
-    # Hauteur utile d / d'
-    # =========================================================================
-
-    @property
-    def d(self) -> float:
-        """Hauteur utile [mm] — distance fibre comprimée au CDG des aciers tendus."""
+    def d(self) -> Optional[float]:
+        """Hauteur utile des armatures tendues (mm)."""
         return self._d
 
     @d.setter
-    def d(self, val: float) -> None:
-        self._d = val
+    def d(self, value: float) -> None:
+        if value <= 0 or value > self._h:
+            raise ValueError(f"d={value} doit être dans ]0, h={self._h}]")
+        self._d = value
         self._invalidate_cache()
 
     @property
-    def d_report(self) -> FormulaResult:
-        return FormulaResult(
-            symbol="d",
-            formula="h - enrobage - φt - φl/2  (ou 0.9·h par défaut)",
-            formula_values=f"d = {self._d:.2f}",
-            unit="mm",
-            ref="EC2 — §6.1",
-            value=self._d,
-        )
-
-    @property
-    def d_prime(self) -> float:
-        """Distance fibre comprimée au CDG des aciers comprimés [mm]."""
+    def d_prime(self) -> Optional[float]:
+        """Distance du centre des armatures comprimées au parement (mm)."""
         return self._d_prime
 
     @d_prime.setter
-    def d_prime(self, val: float) -> None:
-        self._d_prime = val
+    def d_prime(self, value: float) -> None:
+        if value < 0 or value > self._h:
+            raise ValueError(f"d'={value} doit être dans [0, h={self._h}]")
+        self._d_prime = value
+        self._invalidate_cache()
+
+    # =================================================================
+    # Enrobages et diamètres
+    # =================================================================
+
+    @property
+    def cnom(self) -> Optional[float]:
+        """Enrobage nominal côté tendu (mm)."""
+        return self._cnom
+
+    @cnom.setter
+    def cnom(self, value: float) -> None:
+        self._cnom = value
+
+    @property
+    def cnom_top(self) -> Optional[float]:
+        """Enrobage nominal côté comprimé (mm). Si None, utilise cnom."""
+        return self._cnom_top
+
+    @cnom_top.setter
+    def cnom_top(self, value: float) -> None:
+        self._cnom_top = value
+
+    @property
+    def phi_l(self) -> Optional[int]:
+        """Diamètre des armatures longitudinales (mm)."""
+        return self._phi_l
+
+    @phi_l.setter
+    def phi_l(self, value: int) -> None:
+        self._phi_l = value
+
+    @property
+    def phi_t(self) -> Optional[int]:
+        """Diamètre des armatures transversales (mm)."""
+        return self._phi_t
+
+    @phi_t.setter
+    def phi_t(self, value: int) -> None:
+        self._phi_t = value
+
+    # =================================================================
+    # Classe d'exposition et structurale
+    # =================================================================
+
+    @property
+    def exposure_class(self) -> Optional[str]:
+        """Classe d'exposition EC2 (ex: 'XC3')."""
+        return self._exposure_class
+
+    @exposure_class.setter
+    def exposure_class(self, value: str) -> None:
+        value = value.upper()
+        if value not in EXPOSURE_CLASSES:
+            raise ValueError(
+                f"Classe d'exposition '{value}' inconnue. "
+                f"Disponibles : {list(EXPOSURE_CLASSES.keys())}"
+            )
+        self._exposure_class = value
+
+    @property
+    def structural_class(self) -> str:
+        """Classe structurale EC2 (ex: 'S4')."""
+        return self._structural_class
+
+    @structural_class.setter
+    def structural_class(self, value: str) -> None:
+        value = value.upper()
+        if value not in STRUCTURAL_CLASSES:
+            raise ValueError(
+                f"Classe structurale '{value}' inconnue. "
+                f"Disponibles : {list(STRUCTURAL_CLASSES.keys())}"
+            )
+        self._structural_class = value
+
+    @property
+    def cmin_dur(self) -> Optional[int]:
+        """Enrobage minimal de durabilité cmin,dur (mm) — EC2 Tableau 4.4N."""
+        if self._exposure_class is None:
+            return None
+        return CNOM_MIN_TABLE.get(self._structural_class, {}).get(
+            self._exposure_class, None
+        )
+
+    def get_cmin_dur_ref(self) -> str:
+        return "EC2 — Tableau 4.4N"
+
+    # =================================================================
+    # Armatures : double mode (section directe ou RebarSet)
+    # =================================================================
+
+    # --- Bottom (tendues) ---
+
+    @property
+    def rebars_bottom(self) -> Optional[List[RebarSet]]:
+        """Liste de RebarSet pour les armatures tendues."""
+        return self._rebars_bottom
+
+    @rebars_bottom.setter
+    def rebars_bottom(self, sets: List[RebarSet]) -> None:
+        self._rebars_bottom = sets
         self._invalidate_cache()
 
     @property
-    def d_prime_report(self) -> FormulaResult:
-        return FormulaResult(
-            symbol="d'",
-            formula="enrobage + φt + φl/2  (ou 0.1·h par défaut)",
-            formula_values=f"d' = {self._d_prime:.2f}",
-            unit="mm",
-            ref="EC2 — §6.1",
-            value=self._d_prime,
-        )
-
-    # =========================================================================
-    # Bras de levier z
-    # =========================================================================
-
-    @property
-    def z(self) -> float:
-        """
-        Bras de levier [mm].
-        Si non renseigné, retourne 0.9·d (estimation).
-        """
-        if self._z is not None:
-            return self._z
-        return 0.9 * self._d
-
-    @z.setter
-    def z(self, val: float) -> None:
-        self._z = val
-
-    @property
-    def z_report(self) -> FormulaResult:
-        estimated = self._z is None
-        return FormulaResult(
-            symbol="z",
-            formula="0.9·d (estimation)" if estimated else "z (calculé)",
-            formula_values=f"z = {self.z:.2f}" + (" (estimation)" if estimated else ""),
-            unit="mm",
-            ref="EC2 — §6.1",
-            value=self.z,
-        )
-
-    # =========================================================================
-    # Armatures
-    # =========================================================================
-
-    @property
     def ast(self) -> Optional[float]:
-        """Section d'armatures tendues [mm²]."""
+        """
+        Section d'acier tendu (cm²).
+
+        Si des RebarSet sont définis, l'aire est calculée automatiquement.
+        Sinon, renvoie la valeur stockée manuellement.
+        """
+        if self._rebars_bottom:
+            return rebar_sets_total_area(self._rebars_bottom) / 100.0
         return self._ast
 
     @ast.setter
-    def ast(self, val: float) -> None:
-        self._ast = val
+    def ast(self, value: float) -> None:
+        """
+        Renseigne l'aire d'acier tendu manuellement (cm²).
+
+        Note : si des RebarSet sont déjà définis, ils priment sur cette valeur.
+        Pour forcer la valeur manuelle, supprimer les RebarSet :
+            rc.rebars_bottom = None
+        """
+        if value < 0:
+            raise ValueError("ast doit être ≥ 0")
+        self._ast = value
+        self._invalidate_cache()
+
+    @property
+    def ast_mm2(self) -> Optional[float]:
+        """Section d'acier tendu (mm²)."""
+        a = self.ast
+        return a * 100.0 if a is not None else None
+
+    @property
+    def rebars_bottom_label(self) -> Optional[str]:
+        """Label des armatures tendues : ex '2HA12+2HA10'."""
+        if self._rebars_bottom:
+            return rebar_sets_label(self._rebars_bottom)
+        return None
+
+    # --- Top (comprimées) ---
+
+    @property
+    def rebars_top(self) -> Optional[List[RebarSet]]:
+        """Liste de RebarSet pour les armatures comprimées."""
+        return self._rebars_top
+
+    @rebars_top.setter
+    def rebars_top(self, sets: List[RebarSet]) -> None:
+        self._rebars_top = sets
         self._invalidate_cache()
 
     @property
     def asc(self) -> Optional[float]:
-        """Section d'armatures comprimées [mm²]."""
+        """
+        Section d'acier comprimé (cm²).
+
+        Si des RebarSet sont définis, l'aire est calculée automatiquement.
+        Sinon, renvoie la valeur stockée manuellement.
+        """
+        if self._rebars_top:
+            return rebar_sets_total_area(self._rebars_top) / 100.0
         return self._asc
 
     @asc.setter
-    def asc(self, val: float) -> None:
-        self._asc = val
+    def asc(self, value: float) -> None:
+        if value < 0:
+            raise ValueError("asc doit être ≥ 0")
+        self._asc = value
         self._invalidate_cache()
 
     @property
-    def asp(self) -> Optional[float]:
-        """Section d'armatures de précontrainte [mm²]."""
-        return self._asp
-
-    @asp.setter
-    def asp(self, val: float) -> None:
-        self._asp = val
+    def asc_mm2(self) -> Optional[float]:
+        """Section d'acier comprimé (mm²)."""
+        a = self.asc
+        return a * 100.0 if a is not None else None
 
     @property
-    def asw(self) -> Optional[float]:
-        """Section d'armatures transversales [mm²]."""
-        return self._asw
+    def rebars_top_label(self) -> Optional[str]:
+        """Label des armatures comprimées : ex '2HA12'."""
+        if self._rebars_top:
+            return rebar_sets_label(self._rebars_top)
+        return None
 
-    @asw.setter
-    def asw(self, val: float) -> None:
-        self._asw = val
-
-    @property
-    def astc(self) -> Optional[float]:
-        """Section totale d'armatures longitudinales Ast + Asc [mm²]."""
-        ast = self._ast or 0.0
-        asc = self._asc or 0.0
-        if self._ast is None and self._asc is None:
-            return None
-        return ast + asc
-
-    # =========================================================================
-    # Diamètres
-    # =========================================================================
-
-    @property
-    def phi_l(self) -> Optional[float]:
-        """Diamètre longitudinal max [mm]."""
-        return self._phi_l
-
-    @phi_l.setter
-    def phi_l(self, val: float) -> None:
-        self._phi_l = val
-
-    @property
-    def phi_t(self) -> Optional[float]:
-        """Diamètre transversal [mm]."""
-        return self._phi_t
-
-    @phi_t.setter
-    def phi_t(self, val: float) -> None:
-        self._phi_t = val
-
-    # =========================================================================
-    # Enrobages
-    # =========================================================================
-
-    @property
-    def cnom(self) -> Optional[float]:
-        """Enrobage nominal [mm]."""
-        return self._cnom
-
-    @cnom.setter
-    def cnom(self, val: float) -> None:
-        self._cnom = val
-
-    @property
-    def cmin(self) -> Optional[float]:
-        """Enrobage minimal [mm]."""
-        return self._cmin
-
-    @cmin.setter
-    def cmin(self, val: float) -> None:
-        self._cmin = val
-
-    @property
-    def delta_cdev(self) -> float:
-        """Tolérance d'exécution [mm]."""
-        return self._delta_cdev
-
-    @delta_cdev.setter
-    def delta_cdev(self, val: float) -> None:
-        self._delta_cdev = val
-
-    # =========================================================================
-    # Espacements
-    # =========================================================================
-
-    @property
-    def ev(self) -> Optional[float]:
-        """Espacement vertical entre armatures [mm]."""
-        return self._ev
-
-    @ev.setter
-    def ev(self, val: float) -> None:
-        self._ev = val
+    # =================================================================
+    # Espacement
+    # =================================================================
 
     @property
     def eh(self) -> Optional[float]:
-        """Espacement horizontal entre armatures [mm]."""
+        """Espacement horizontal entre barres (mm)."""
         return self._eh
 
     @eh.setter
-    def eh(self, val: float) -> None:
-        self._eh = val
+    def eh(self, value: float) -> None:
+        self._eh = value
 
     @property
-    def st(self) -> Optional[float]:
-        """Espacement des cadres / étriers [mm]."""
-        return self._st
+    def ev(self) -> Optional[float]:
+        """Espacement vertical entre lits (mm)."""
+        return self._ev
 
-    @st.setter
-    def st(self, val: float) -> None:
-        self._st = val
+    @ev.setter
+    def ev(self, value: float) -> None:
+        self._ev = value
 
-    # =========================================================================
-    # Exposition / Classe structurale
-    # =========================================================================
-
-    @property
-    def exposure_class(self) -> Optional[str]:
-        """Classe d'exposition (ex. 'XC1', 'XD2')."""
-        return self._exposure_class
-
-    @exposure_class.setter
-    def exposure_class(self, val: str) -> None:
-        self._exposure_class = val
+    # =================================================================
+    # Bras de levier
+    # =================================================================
 
     @property
-    def structural_class(self) -> str:
-        """Classe structurale (S1 à S6)."""
-        return self._structural_class
+    def z(self) -> Optional[float]:
+        """Bras de levier z (mm)."""
+        return self._z
 
-    @structural_class.setter
-    def structural_class(self, val: str) -> None:
-        self._structural_class = val
+    @z.setter
+    def z(self, value: float) -> None:
+        self._z = value
 
-    # =========================================================================
-    # Type d'acier
-    # =========================================================================
-
-    @property
-    def steel_kind(self) -> str:
-        """Type d'armature : 'HA', 'RL', 'PC'."""
-        return self._steel_kind
-
-    @steel_kind.setter
-    def steel_kind(self, val: str) -> None:
-        if val not in ("HA", "RL", "PC"):
-            raise ValueError(f"steel_kind doit être 'HA', 'RL' ou 'PC' (reçu : {val})")
-        self._steel_kind = val
-
-    # =========================================================================
-    # Fluage
-    # =========================================================================
+    # =================================================================
+    # Fluage et coefficient d'équivalence
+    # =================================================================
 
     @property
     def phi_fluage(self) -> Optional[float]:
@@ -460,319 +667,346 @@ class SecMatRC:
         return self._phi_fluage
 
     @phi_fluage.setter
-    def phi_fluage(self, val: float) -> None:
-        self._phi_fluage = val
+    def phi_fluage(self, value: float) -> None:
+        self._phi_fluage = value
         self._invalidate_cache()
 
-    # =========================================================================
-    # Inerties homogène / fissurée — Section rectangulaire
-    # =========================================================================
+    @property
+    def alpha_eq_short(self) -> float:
+        """
+        Coefficient d'équivalence court terme : αe = Es / Ecm.
 
-    def _check_computable(self) -> list[str]:
+        Ref: EC2 §5.4(2)
         """
-        Retourne la liste des paramètres manquants pour calculer
-        les inerties homogène et fissurée.
+        return self._mat_s.Es / self._mat_c.Ecm
+
+    @property
+    def alpha_eq_long(self) -> Optional[float]:
         """
+        Coefficient d'équivalence long terme : αe,lt = Es / (Ecm / (1 + φ)).
+
+        Ref: EC2 §5.4(2) — prise en compte simplifiée du fluage.
+        Retourne None si phi_fluage non renseigné.
+        """
+        if self._phi_fluage is None:
+            return None
+        Ec_eff = self._mat_c.Ecm / (1.0 + self._phi_fluage)
+        return self._mat_s.Es / Ec_eff
+
+    def get_alpha_eq_short_formula(self, with_values: bool = False) -> str:
+        if with_values:
+            return (f"αe = Es / Ecm = {self._mat_s.Es:.0f} / "
+                    f"{self._mat_c.Ecm:.0f} = {self.alpha_eq_short:.2f}")
+        return "αe = Es / Ecm"
+
+    def get_alpha_eq_long_formula(self, with_values: bool = False) -> str:
+        if with_values and self._phi_fluage is not None:
+            Ec_eff = self._mat_c.Ecm / (1.0 + self._phi_fluage)
+            return (f"αe,lt = Es / (Ecm / (1+φ)) = {self._mat_s.Es:.0f} / "
+                    f"({self._mat_c.Ecm:.0f} / (1+{self._phi_fluage:.2f})) = "
+                    f"{self._mat_s.Es:.0f} / {Ec_eff:.0f} = "
+                    f"{self.alpha_eq_long:.2f}")
+        return "αe,lt = Es / (Ecm / (1 + φ))"
+
+    @property
+    def alpha_eq_short_ref(self) -> str:
+        return "EC2 — §5.4(2)"
+
+    @property
+    def alpha_eq_long_ref(self) -> str:
+        return "EC2 — §5.4(2)"
+
+    # =================================================================
+    # Compute d from covers
+    # =================================================================
+
+    def compute_d_from_covers(self, side: str = "bottom") -> float:
+        """
+        Calcule la hauteur utile à partir de l'enrobage et des diamètres.
+
+            d = h - cnom - φt - φl/2        (armatures tendues)
+            d'= cnom_top + φt + φl/2        (armatures comprimées)
+
+        Si les RebarSet sont définis, φl est pris comme le diamètre max
+        du jeu de barres correspondant.
+
+        :param side: "bottom" → calcule d, "top" → calcule d',
+                     "both" → calcule les deux
+        :return: d ou d' calculé (si "both", retourne d)
+        :raises ValueError: si données manquantes
+        """
+        missing = self._missing_for_compute_d(side)
+        if missing:
+            raise ValueError(
+                f"Données manquantes pour compute_d('{side}') : {missing}"
+            )
+
+        phi_t = self._phi_t
+
+        if side in ("bottom", "both"):
+            phi_l_bot = self._get_phi_l_bottom()
+            cnom_bot = self._cnom
+            self._d = self._h - cnom_bot - phi_t - phi_l_bot / 2.0
+            self._invalidate_cache()
+
+        if side in ("top", "both"):
+            phi_l_top = self._get_phi_l_top()
+            cnom_t = self._cnom_top if self._cnom_top is not None else self._cnom
+            self._d_prime = cnom_t + phi_t + phi_l_top / 2.0
+            self._invalidate_cache()
+
+        if side == "top":
+            return self._d_prime
+        return self._d
+
+    def _get_phi_l_bottom(self) -> float:
+        """Diamètre longitudinal côté tendu : RebarSet max ou phi_l."""
+        if self._rebars_bottom:
+            return rebar_sets_phi_max(self._rebars_bottom)
+        if self._phi_l is not None:
+            return self._phi_l
+        return 0
+
+    def _get_phi_l_top(self) -> float:
+        """Diamètre longitudinal côté comprimé : RebarSet max ou phi_l."""
+        if self._rebars_top:
+            return rebar_sets_phi_max(self._rebars_top)
+        if self._phi_l is not None:
+            return self._phi_l
+        return 0
+
+    def _missing_for_compute_d(self, side: str) -> List[str]:
+        """Liste les données manquantes pour compute_d."""
         missing = []
-        if self._ast is None:
-            missing.append("ast")
-        if self._d is None:
-            missing.append("d")
-        if not hasattr(self._sec, 'b'):
-            missing.append("sec.b (section non rectangulaire ou b non défini)")
+        if self._phi_t is None:
+            missing.append("phi_t")
+
+        if side in ("bottom", "both"):
+            if self._cnom is None:
+                missing.append("cnom")
+            if self._rebars_bottom is None and self._phi_l is None:
+                missing.append("phi_l ou rebars_bottom")
+
+        if side in ("top", "both"):
+            if self._cnom is None and self._cnom_top is None:
+                missing.append("cnom ou cnom_top")
+            if self._rebars_top is None and self._phi_l is None:
+                missing.append("phi_l ou rebars_top")
+
         return missing
 
-    @property
-    def can_compute_inertia(self) -> bool:
-        """True si toutes les données sont disponibles pour le calcul."""
-        return len(self._check_computable()) == 0
+    def get_compute_d_formula(self, with_values: bool = False) -> str:
+        if with_values and self._d is not None:
+            phi_l = self._get_phi_l_bottom()
+            return (f"d = h - cnom - φt - φl/2 = {self._h:.0f} - "
+                    f"{self._cnom:.0f} - {self._phi_t:.0f} - "
+                    f"{phi_l:.0f}/2 = {self._d:.1f} mm")
+        return "d = h - cnom - φt - φl/2"
 
     @property
-    def missing_for_inertia(self) -> list[str]:
-        """Liste des paramètres manquants pour le calcul des inerties."""
-        return self._check_computable()
+    def compute_d_ref(self) -> str:
+        return "EC2 — §4.4.1"
 
-    # ----- Axe neutre homogène -----
+    # =================================================================
+    # Inerties (sections rectangulaires uniquement)
+    # =================================================================
 
     @property
-    def xh(self) -> Optional[float]:
+    def missing_for_inertia(self) -> List[str]:
+        """Liste les paramètres manquants pour calculer Ih et Ic."""
+        missing = []
+        if self.ast is None:
+            missing.append("ast (ou rebars_bottom)")
+        if self._d is None:
+            missing.append("d")
+        # b requis
+        if not hasattr(self._sec, 'b'):
+            missing.append("sec.b (section non rectangulaire)")
+        return missing
+
+    def _compute_inertia(self, alpha_eq: float) -> None:
         """
-        Position de l'axe neutre en section homogène [mm].
+        Calcule les inerties homogénéisée et fissurée (section rectangulaire).
 
-        Section rectangulaire : résolution de l'équation du moment
-        statique de la section homogène.
-
-        Retourne None si données manquantes.
+        :param alpha_eq: coefficient d'équivalence à utiliser
         """
-        if not self.can_compute_inertia:
-            return None
-        if self._xh is not None:
-            return self._xh
-
         b = self._sec.b
         h = self._h
-        alpha_e = self.alpha_eq_short
-        ast = self._ast
-        asc = self._asc or 0.0
         d = self._d
-        d_p = self._d_prime
+        Ast = self.ast_mm2 or 0.0
+        Asc = self.asc_mm2 or 0.0
+        d_p = self._d_prime or 0.0
 
-        # Moment statique / fibre sup = 0
-        # b·h·(h/2) + (αe-1)·Asc·d' + (αe-1)·Ast·d
-        # divisé par
-        # b·h + (αe-1)·(Ast + Asc)
-        A_hom = b * h + (alpha_e - 1) * (ast + asc)
-        S_hom = b * h * (h / 2) + (alpha_e - 1) * asc * d_p + (alpha_e - 1) * ast * d
+        # --- Section homogénéisée ---
+        # Aire homogénéisée
+        Ah = b * h + (alpha_eq - 1) * (Ast + Asc)
+        # Position AN depuis le haut
+        Sh = (b * h * h / 2.0
+              + (alpha_eq - 1) * Ast * d
+              + (alpha_eq - 1) * Asc * d_p)
+        self._xh = Sh / Ah
+        # Inertie
+        self._Ih = (b * h ** 3 / 12.0
+                    + b * h * (self._xh - h / 2.0) ** 2
+                    + (alpha_eq - 1) * Ast * (d - self._xh) ** 2
+                    + (alpha_eq - 1) * Asc * (self._xh - d_p) ** 2)
 
-        self._xh = S_hom / A_hom
-        return self._xh
+        # --- Section fissurée (béton tendu négligé) ---
+        # Equation du 2nd degré : b·x²/2 + (αe-1)·Asc·(x-d') = αe·Ast·(d-x)
+        # → b/2·x² + [(αe-1)·Asc + αe·Ast]·x - [(αe-1)·Asc·d' + αe·Ast·d] = 0
+        a_coef = b / 2.0
+        b_coef = (alpha_eq - 1) * Asc + alpha_eq * Ast
+        c_coef = -((alpha_eq - 1) * Asc * d_p + alpha_eq * Ast * d)
 
-    @property
-    def xh_report(self) -> Optional[FormulaResult]:
-        if not self.can_compute_inertia:
-            return FormulaResult(
-                symbol="xh",
-                formula=f"Données manquantes : {', '.join(self.missing_for_inertia)}",
-                formula_values="—",
-                unit="mm", ref="EC2", value=None,
-            )
-        return FormulaResult(
-            symbol="xh",
-            formula="S_hom / A_hom",
-            formula_values=f"xh = {self.xh:.2f}",
-            unit="mm",
-            ref="EC2 — §5.4",
-            value=self.xh,
-        )
+        delta = b_coef ** 2 - 4 * a_coef * c_coef
+        self._xc = (-b_coef + math.sqrt(delta)) / (2 * a_coef)
 
-    # ----- Inertie homogène -----
+        self._Ic = (b * self._xc ** 3 / 3.0
+                    + (alpha_eq - 1) * Asc * (self._xc - d_p) ** 2
+                    + alpha_eq * Ast * (d - self._xc) ** 2)
+
+        self._cache_valid = True
+
+    def _ensure_cache(self, alpha_eq: Optional[float] = None) -> None:
+        """Recalcule le cache si nécessaire."""
+        if self._cache_valid:
+            return
+        if self.missing_for_inertia:
+            return
+        ae = alpha_eq or self.alpha_eq_short
+        self._compute_inertia(ae)
+
+    def _invalidate_cache(self) -> None:
+        self._cache_valid = False
+        self._Ih = None
+        self._Ic = None
+        self._xh = None
+        self._xc = None
 
     @property
     def Ih(self) -> Optional[float]:
-        """
-        Inertie de la section homogène [mm⁴].
-        Retourne None si données manquantes.
-        """
-        if not self.can_compute_inertia:
-            return None
-        if self._Ih is not None:
-            return self._Ih
-
-        b = self._sec.b
-        h = self._h
-        alpha_e = self.alpha_eq_short
-        ast = self._ast
-        asc = self._asc or 0.0
-        d = self._d
-        d_p = self._d_prime
-        xh = self.xh
-
-        self._Ih = (
-            b * h**3 / 12
-            + b * h * (xh - h / 2) ** 2
-            + (alpha_e - 1) * asc * (xh - d_p) ** 2
-            + (alpha_e - 1) * ast * (d - xh) ** 2
-        )
+        """Inertie de la section homogénéisée (mm⁴). None si données manquantes."""
+        self._ensure_cache()
         return self._Ih
 
     @property
-    def Ih_report(self) -> Optional[FormulaResult]:
-        if not self.can_compute_inertia:
-            return FormulaResult(
-                symbol="Ih",
-                formula=f"Données manquantes : {', '.join(self.missing_for_inertia)}",
-                formula_values="—",
-                unit="mm⁴", ref="EC2", value=None,
-            )
-        return FormulaResult(
-            symbol="Ih",
-            formula="b·h³/12 + b·h·(xh-h/2)² + (αe-1)·Asc·(xh-d')² + (αe-1)·Ast·(d-xh)²",
-            formula_values=f"Ih = {self.Ih:.0f}",
-            unit="mm⁴",
-            ref="EC2 — §5.4",
-            value=self.Ih,
-        )
-
-    # ----- Axe neutre fissuré -----
-
-    @property
-    def xc(self) -> Optional[float]:
-        """
-        Position de l'axe neutre en section fissurée [mm].
-
-        Résolution de l'équation du 2nd degré :
-            (b/2)·x² + (αe·Asc + αe·Ast)·x - (αe·Asc·d' + αe·Ast·d) = 0
-
-        Nota : seule la racine positive est retenue.
-
-        Retourne None si données manquantes.
-        """
-        if not self.can_compute_inertia:
-            return None
-        if self._xc is not None:
-            return self._xc
-
-        b = self._sec.b
-        alpha_e = self.alpha_eq_short
-        ast = self._ast
-        asc = self._asc or 0.0
-        d = self._d
-        d_p = self._d_prime
-
-        # (b/2)·x² + αe·(Asc+Ast)·x - αe·(Asc·d' + Ast·d) = 0
-        a_coef = b / 2
-        b_coef = alpha_e * (asc + ast)
-        c_coef = -(alpha_e * (asc * d_p + ast * d))
-
-        delta = b_coef**2 - 4 * a_coef * c_coef
-        self._xc = (-b_coef + delta**0.5) / (2 * a_coef)
-        return self._xc
-
-    @property
-    def xc_report(self) -> Optional[FormulaResult]:
-        if not self.can_compute_inertia:
-            return FormulaResult(
-                symbol="xc",
-                formula=f"Données manquantes : {', '.join(self.missing_for_inertia)}",
-                formula_values="—",
-                unit="mm", ref="EC2", value=None,
-            )
-        return FormulaResult(
-            symbol="xc",
-            formula="(b/2)·x² + αe·(Asc+Ast)·x - αe·(Asc·d'+Ast·d) = 0",
-            formula_values=f"xc = {self.xc:.2f}",
-            unit="mm",
-            ref="EC2 — §5.4",
-            value=self.xc,
-        )
-
-    # ----- Inertie fissurée -----
-
-    @property
     def Ic(self) -> Optional[float]:
-        """
-        Inertie de la section fissurée [mm⁴].
-        Retourne None si données manquantes.
-        """
-        if not self.can_compute_inertia:
-            return None
-        if self._Ic is not None:
-            return self._Ic
-
-        b = self._sec.b
-        alpha_e = self.alpha_eq_short
-        ast = self._ast
-        asc = self._asc or 0.0
-        d = self._d
-        d_p = self._d_prime
-        xc = self.xc
-
-        self._Ic = (
-            b * xc**3 / 3
-            + alpha_e * asc * (xc - d_p) ** 2
-            + alpha_e * ast * (d - xc) ** 2
-        )
+        """Inertie de la section fissurée (mm⁴). None si données manquantes."""
+        self._ensure_cache()
         return self._Ic
 
     @property
-    def Ic_report(self) -> Optional[FormulaResult]:
-        if not self.can_compute_inertia:
-            return FormulaResult(
-                symbol="Ic",
-                formula=f"Données manquantes : {', '.join(self.missing_for_inertia)}",
-                formula_values="—",
-                unit="mm⁴", ref="EC2", value=None,
+    def xh(self) -> Optional[float]:
+        """Position de l'AN — section homogénéisée (mm depuis le haut)."""
+        self._ensure_cache()
+        return self._xh
+
+    @property
+    def xc(self) -> Optional[float]:
+        """Position de l'AN — section fissurée (mm depuis le haut)."""
+        self._ensure_cache()
+        return self._xc
+
+    # =================================================================
+    # Utilitaires de consultation des tableaux réglementaires
+    # =================================================================
+
+    @staticmethod
+    def print_exposure_classes() -> None:
+        """Affiche toutes les classes d'exposition avec description."""
+        print(f"\n{'='*80}")
+        print(f"  CLASSES D'EXPOSITION — EC2 Tableau 4.1")
+        print(f"{'='*80}")
+        for cls, info in EXPOSURE_CLASSES.items():
+            print(f"\n  {cls:4s}  │ {info['risk']}")
+            print(f"        │ {info['description']}")
+            print(f"        │ Ex: {info['examples']}")
+        print(f"\n{'='*80}\n")
+
+    @staticmethod
+    def print_structural_classes() -> None:
+        """Affiche toutes les classes structurales avec description."""
+        print(f"\n{'='*70}")
+        print(f"  CLASSES STRUCTURALES — EC2 §4.4.1.2")
+        print(f"{'='*70}")
+        for cls, info in STRUCTURAL_CLASSES.items():
+            print(f"\n  {cls:3s}  │ Durée : {info['lifetime']}")
+            print(f"       │ {info['description']}")
+            print(f"       │ Ex: {info['examples']}")
+        print(f"\n{'='*70}\n")
+
+    @staticmethod
+    def print_cnom_table() -> None:
+        """Affiche le tableau cmin,dur (EC2 Tableau 4.4N)."""
+        exposures = ["X0", "XC1", "XC2", "XC3", "XC4",
+                     "XD1", "XD2", "XD3", "XS1", "XS2", "XS3"]
+        print(f"\n{'='*90}")
+        print(f"  cmin,dur (mm) — EC2 Tableau 4.4N")
+        print(f"{'='*90}")
+        header = "       │ " + " │ ".join(f"{e:>4s}" for e in exposures)
+        print(header)
+        print("  " + "─" * 86)
+        for sc in ["S1", "S2", "S3", "S4", "S5", "S6"]:
+            vals = " │ ".join(
+                f"{CNOM_MIN_TABLE[sc].get(e, '--'):>4}" for e in exposures
             )
-        return FormulaResult(
-            symbol="Ic",
-            formula="b·xc³/3 + αe·Asc·(xc-d')² + αe·Ast·(d-xc)²",
-            formula_values=f"Ic = {self.Ic:.0f}",
-            unit="mm⁴",
-            ref="EC2 — §5.4",
-            value=self.Ic,
-        )
+            print(f"  {sc:3s}  │ {vals}")
+        print(f"{'='*90}\n")
 
-    # =========================================================================
-    # Reporting
-    # =========================================================================
+    @staticmethod
+    def print_rebar_areas() -> None:
+        """Affiche le tableau des aires unitaires des barres HA."""
+        print(f"\n{'='*50}")
+        print(f"  AIRES UNITAIRES DES BARRES HA (mm²)")
+        print(f"{'='*50}")
+        for phi, area in REBAR_AREAS.items():
+            print(f"  HA{phi:<3d} │ {area:>8.2f} mm²  ({area/100:.2f} cm²)")
+        print(f"{'='*50}\n")
 
-    def all_reports(self) -> list[FormulaResult]:
-        """Retourne tous les FormulaResult disponibles."""
-        reports = [
-            self.d_report,
-            self.d_prime_report,
-            self.z_report,
-            self.alpha_eq_short_report,
-        ]
-        if self._phi_fluage is not None:
-            reports.append(self.alpha_eq_long_report)
-
-        reports.extend([
-            self.xh_report,
-            self.Ih_report,
-            self.xc_report,
-            self.Ic_report,
-        ])
-        return reports
+    # =================================================================
+    # Summary et affichage
+    # =================================================================
 
     def summary(self) -> dict:
-        """
-        Résumé de toutes les données stockées.
-        Utile pour le debug et l'export.
-        """
+        """Retourne un dictionnaire de toutes les données stockées."""
         return {
             "name": self._name,
             "h": self._h,
             "d": self._d,
-            "d'": self._d_prime,
-            "z": self.z,
-            "ast": self._ast,
-            "asc": self._asc,
-            "asp": self._asp,
-            "asw": self._asw,
-            "astc": self.astc,
+            "d_prime": self._d_prime,
+            "cnom": self._cnom,
+            "cnom_top": self._cnom_top,
             "phi_l": self._phi_l,
             "phi_t": self._phi_t,
-            "cnom": self._cnom,
-            "cmin": self._cmin,
-            "delta_cdev": self._delta_cdev,
-            "ev": self._ev,
-            "eh": self._eh,
-            "st": self._st,
             "exposure_class": self._exposure_class,
             "structural_class": self._structural_class,
-            "steel_kind": self._steel_kind,
+            "cmin_dur": self.cmin_dur,
+            "ast (cm²)": self.ast,
+            "rebars_bottom": self.rebars_bottom_label,
+            "asc (cm²)": self.asc,
+            "rebars_top": self.rebars_top_label,
+            "eh": self._eh,
+            "ev": self._ev,
+            "z": self._z,
             "phi_fluage": self._phi_fluage,
-            "alpha_eq_short": self.alpha_eq_short,
-            "alpha_eq_long": self.alpha_eq_long,
+            "alpha_eq_short": round(self.alpha_eq_short, 2),
+            "alpha_eq_long": (round(self.alpha_eq_long, 2)
+                              if self.alpha_eq_long is not None else None),
             "xh": self.xh,
-            "Ih": self.Ih,
             "xc": self.xc,
-            "Ic": self.Ic,
+            "Ih (mm⁴)": self.Ih,
+            "Ic (mm⁴)": self.Ic,
         }
-
-    # =========================================================================
-    # Affichage
-    # =========================================================================
-
-    def __repr__(self) -> str:
-        return (
-            f"SecMatRC(sec={self._sec.__class__.__name__}, "
-            f"concrete={self._mat_c}, "
-            f"reinforcement={self._mat_s}, "
-            f"d={self._d:.1f})"
-        )
 
     def __str__(self) -> str:
         lines = [
-            f"{'=' * 70}",
+            f"\n{'=' * 70}",
             f"  {self._name}",
             f"  Section : {self._sec.__class__.__name__} | "
             f"Béton : fck={self._mat_c.fck:.0f} MPa | "
             f"Acier : fyk={self._mat_s.fyk:.0f} MPa",
             f"{'=' * 70}",
             "",
-            "  --- Données stockées ---",
         ]
 
         data = self.summary()
@@ -783,45 +1017,81 @@ class SecMatRC:
             val_str = f"{val}" if val is not None else "non renseigné"
             lines.append(f"  {status}  {key:20s} = {val_str}")
 
-        lines.append("")
-        lines.append("  --- Formules ---")
-        for r in self.all_reports():
-            val_str = r.formula_values if r.value is not None else f"⚠ {r.formula}"
-            lines.append(f"  {val_str:55s} [{r.unit:5s}]  ({r.ref})")
+        missing = self.missing_for_inertia
+        if missing:
+            lines.append(f"\n  ⚠ Manquant pour inertie : {missing}")
 
-        lines.append(f"{'=' * 70}")
+        lines.append(f"\n{'=' * 70}")
         return "\n".join(lines)
+
+    def __repr__(self) -> str:
+        return (f"SecMatRC(name='{self._name}', h={self._h}, "
+                f"d={self._d}, ast={self.ast}, asc={self.asc})")
 
 
 # =============================================================================
-# Main
+# Main — Démonstration
 # =============================================================================
 
 if __name__ == "__main__":
 
-    from .sec_rectangular import SecRectangular
-    from .mat_concrete import MatConcrete
-    from .mat_reinforcement import MatReinforcement
+    # --- Affichage des tableaux ---
+    SecMatRC.print_exposure_classes()
+    SecMatRC.print_structural_classes()
+    SecMatRC.print_cnom_table()
+    SecMatRC.print_rebar_areas()
 
-    # --- Création de base ---
-    sec = SecRectangular(b=300, h=500)
-    beton = MatConcrete(fck=30)
-    acier = MatReinforcement(fyk=500, ductility_class="B")
+    # --- Simulation sans imports réels ---
+    class FakeSec:
+        h = 500
+        b = 300
+        def __class_name__(self): return "Rectangular"
+
+    class FakeConcrete:
+        fck = 30
+        Ecm = 33000
+
+    class FakeReinf:
+        fyk = 500
+        Es = 200000
+
+    sec = FakeSec()
+    beton = FakeConcrete()
+    acier = FakeReinf()
 
     rc = SecMatRC(sec=sec, mat_concrete=beton, mat_reinforcement=acier)
     print(rc)
-    print("\n>>> Données manquantes pour inertie :", rc.missing_for_inertia)
+    print("Missing pour inertie :", rc.missing_for_inertia)
 
-    # --- L'utilisateur renseigne les armatures après calcul ---
-    print("\n--- Après calcul de flexion ---")
-    rc.ast = 1570.0    # 5HA20
-    rc.asc = 628.0     # 2HA20
-    rc.d = 455.0       # h - cnom - φt - φl/2
-    rc.d_prime = 45.0
-    rc.cnom = 30.0
-    rc.phi_l = 20.0
-    rc.phi_t = 8.0
-    rc.exposure_class = "XC3"
-    rc.phi_fluage = 2.5
-
+    # --- Mode 1 : section directe ---
+    print("\n--- Mode 1 : Ast en cm² ---")
+    rc.ast = 6.28
+    rc.asc = 2.26
+    rc.cnom = 30
+    rc.phi_l = 20
+    rc.phi_t = 8
+    rc.compute_d_from_covers("both")
+    print(rc.get_compute_d_formula(with_values=True))
     print(rc)
+
+    # --- Mode 2 : par RebarSet ---
+    print("\n--- Mode 2 : RebarSet ---")
+    rc2 = SecMatRC(sec=sec, mat_concrete=beton, mat_reinforcement=acier,
+                   phi_fluage=2.5, name="Poutre_B2")
+
+    rc2.rebars_bottom = [RebarSet(2, 12), RebarSet(2, 10)]
+    rc2.rebars_top = [RebarSet(2, 10)]
+    rc2.cnom = 30
+    rc2.phi_t = 8
+    rc2.exposure_class = "XC3"
+    rc2.structural_class = "S4"
+
+    # phi_l est déduit des RebarSet automatiquement
+    rc2.compute_d_from_covers("both")
+
+    print(f"Armatures tendues  : {rc2.rebars_bottom_label} = {rc2.ast:.2f} cm²")
+    print(f"Armatures comprimées : {rc2.rebars_top_label} = {rc2.asc:.2f} cm²")
+    print(f"cmin,dur = {rc2.cmin_dur} mm")
+    print(f"αe court terme = {rc2.alpha_eq_short:.2f}")
+    print(f"αe long terme  = {rc2.alpha_eq_long:.2f}")
+    print(rc2)
