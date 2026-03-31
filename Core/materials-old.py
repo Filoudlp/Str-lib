@@ -55,7 +55,7 @@ class MatConcrete(Material):
     # Attribut
 
     NU = 0.2 # poisson coef
-    ALPHA = 12 * 10**(-6) # K^(-1)
+    ALPHA = 12 * 10**(-6) # Coefficient dilatation béton # K^(-1)
 
     # Coef
     ALPHA_CC = 1
@@ -168,9 +168,9 @@ class MatSteel(Material):
         :@type ALPHA: double
     """
     # Attribute
-    E = 210000 # MPa
-    NU = 0.3
-    ALPHA = 12 * 10**(-6) # K^(-1)
+    E = 210000 # Module young MPa
+    NU = 0.3 # poisson coef
+    ALPHA = 12 * 10**(-6) # Coefficient dilatation acier # K^(-1)
 
     # Coef
     GAMMA_M0 = 1.0
