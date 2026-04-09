@@ -15,9 +15,9 @@
     ---------
     ec3_1_1/
     ├── classification.py   : Classement des sections transversales    (§5.5)
-    ├── resistance/         : Résistance des sections                  (§6.2)
+    ├── elu/         : Résistance des sections                  (§6.2)
     ├── buckling/           : Flambement et déversement                (§6.3)
-    └── serviceability/     : États limites de service (ELS)           (§7)
+    └── els/     : États limites de service (ELS)           (§7)
 
     Utilisation rapide
     ------------------
