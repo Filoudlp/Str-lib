@@ -16,7 +16,7 @@ __all__ = ['MatBolt', 'BoltCoefficients']
 from dataclasses import dataclass
 from typing import Optional
 
-from materials import Material
+from mat.materials import Material
 from formula import FormulaResult
 
 

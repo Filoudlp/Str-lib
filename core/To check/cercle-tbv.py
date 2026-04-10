@@ -16,7 +16,7 @@ __all__ = ['SecCircular']
 from typing import Optional, List
 import math
 
-from section import Section
+from core.section.section import Section
 from formula import FormulaResult
 
 

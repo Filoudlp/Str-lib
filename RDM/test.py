@@ -26,7 +26,7 @@ import sys
 # Adapter le chemin si nécessaire
 # sys.path.insert(0, "..")
 
-from fem import (
+from rdm import (
     Model,
     DistributedLoad,
     PointLoadOnBeam,
@@ -84,12 +84,12 @@ def test_cantilever():
     A = 5380.0       # mm²
 
     m = Model()
-    n1 = m.add_node(0, 0, dx=True, dy=True, rz=True)   # Encastrement
+    n1 = m.add_node(0, 0, rx=True, ry=True, rz=True)   # Encastrement
     n2 = m.add_node(L, 0)                                # Libre
     b = m.add_element(n1, n2, E=E, A=A, I=I)
 
     # Charge ponctuelle en bout
-    n2.add_force(fy=-P)
+    n2.set_forces(fy=-P)
 
     m.solve()
 
@@ -129,9 +129,9 @@ def test_simply_supported_udl():
     A = 5380.0
 
     m = Model()
-    n1 = m.add_node(0, 0, dx=True, dy=True)     # Appui simple
+    n1 = m.add_node(0, 0, rx=True, ry=True)     # Appui simple
     n2 = m.add_node(L/2, 0)                       # Mi-travée
-    n3 = m.add_node(L, 0, dy=True)                # Appui rouleau
+    n3 = m.add_node(L, 0, ry=True)                # Appui rouleau
 
     b1 = m.add_element(n1, n2, E=E, A=A, I=I)
     b2 = m.add_element(n2, n3, E=E, A=A, I=I)
@@ -182,8 +182,8 @@ def test_portal_frame():
     m = Model()
 
     # Pieds encastrés
-    n1 = m.add_node(0, 0, dx=True, dy=True, rz=True)
-    n2 = m.add_node(L, 0, dx=True, dy=True, rz=True)
+    n1 = m.add_node(0, 0, rx=True, ry=True, rz=True)
+    n2 = m.add_node(L, 0, rx=True, ry=True, rz=True)
 
     # Têtes de poteaux
     n3 = m.add_node(0, H)
@@ -197,7 +197,7 @@ def test_portal_frame():
     m.add_element(n3, n4, E=E, A=A, I=I)
 
     # Charge horizontale en tête gauche
-    n3.add_force(fx=F)
+    n3.set_forces(fx=F)
 
     m.solve()
 
@@ -242,10 +242,10 @@ def test_continuous_beam():
     A = 5380.0
 
     m = Model()
-    n1 = m.add_node(0,     0, dx=True, dy=True)
-    n2 = m.add_node(L,     0, dy=True)
-    n3 = m.add_node(2*L,   0, dy=True)
-    n4 = m.add_node(3*L,   0, dy=True)
+    n1 = m.add_node(0,     0, rx=True, ry=True)
+    n2 = m.add_node(L,     0, ry=True)
+    n3 = m.add_node(2*L,   0, ry=True)
+    n4 = m.add_node(3*L,   0, ry=True)
 
     b1 = m.add_element(n1, n2, E=E, A=A, I=I)
     b2 = m.add_element(n2, n3, E=E, A=A, I=I)
@@ -305,15 +305,15 @@ def test_applied_moment():
     A = 5380.0
 
     m = Model()
-    n1 = m.add_node(0, 0, dx=True, dy=True)
+    n1 = m.add_node(0, 0, rx=True, ry=True)
     n2 = m.add_node(L/2, 0)
-    n3 = m.add_node(L, 0, dy=True)
+    n3 = m.add_node(L, 0, ry=True)
 
     m.add_element(n1, n2, E=E, A=A, I=I)
     m.add_element(n2, n3, E=E, A=A, I=I)
 
     # Moment appliqué au nœud central
-    n2.add_moment(mz=M0)
+    n2.set_forces(mz=M0)
 
     m.solve()
 
@@ -324,7 +324,7 @@ def test_applied_moment():
     results_ok = True
     results_ok &= check("ΣRy = 0",     abs(sum_ry), 0.0, TOL_FORCE)
     results_ok &= check("R1 = M₀/L",   abs(n1.results.ry), R_ana, TOL_FORCE)
-    results_ok &= check("θ mi-travée ≠ 0", float(abs(n2.results.rz) > 0), 1.0, 0)
+    results_ok &= check("θ mi-travée ≠ 0", float(abs(n2.results.theta) > 0), 1.0, 0)
 
     return results_ok
 
@@ -361,7 +361,7 @@ def test_cantilever_udl():
     for i in range(n_elem + 1):
         x = i * L / n_elem
         if i == 0:
-            nodes.append(m.add_node(x, 0, dx=True, dy=True, rz=True))
+            nodes.append(m.add_node(x, 0, rx=True, ry=True, rz=True))
         else:
             nodes.append(m.add_node(x, 0))
 
@@ -419,14 +419,14 @@ def test_edge_cases():
 
     # ── 7b : Aucun chargement → déplacements nuls ──
     m = Model()
-    n1 = m.add_node(0, 0, dx=True, dy=True, rz=True)
-    n2 = m.add_node(3000, 0, dy=True)
+    n1 = m.add_node(0, 0, rx=True, ry=True, rz=True)
+    n2 = m.add_node(3000, 0, ry=True)
     m.add_element(n1, n2, E=E, A=A, I=I)
     m.solve()
 
     results_ok &= check("dx = 0 (pas de charge)", abs(n2.results.dx), 0.0, TOL_DISPLACEMENT)
     results_ok &= check("dy = 0 (pas de charge)", abs(n2.results.dy), 0.0, TOL_DISPLACEMENT)
-    results_ok &= check("θz = 0 (pas de charge)", abs(n2.results.rz), 0.0, 1e-8)
+    results_ok &= check("θz = 0 (pas de charge)", abs(n2.results.theta), 0.0, 1e-8)
 
     return results_ok
 
@@ -453,11 +453,11 @@ def test_axial():
     A = 5380.0
 
     m = Model()
-    n1 = m.add_node(0, 0, dx=True, dy=True, rz=True)
-    n2 = m.add_node(L, 0, dy=True)
+    n1 = m.add_node(0, 0, rx=True, ry=True, rz=True)
+    n2 = m.add_node(L, 0, ry=True)
 
     m.add_element(n1, n2, E=E, A=A, I=I)
-    n2.add_force(fx=F)
+    n2.set_forces(fx=F)
 
     m.solve()
 
