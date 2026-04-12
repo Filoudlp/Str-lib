@@ -26,7 +26,7 @@ def get_section(data: dict, name: str) -> dict:
 
 
 if __name__ == "__main__":
-    with open("IPE.json", "r", encoding="utf-8") as f:
+    with open("ressource/IPE.json", "r", encoding="utf-8") as f:
         data = json.load(f)
 
     ipe100 = get_section(data, "IPE 100")

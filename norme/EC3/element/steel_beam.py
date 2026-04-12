@@ -506,6 +506,8 @@ if __name__ == "__main__":
         section_type="I",
     )
 
+    
+
     sep = "-" * 60
 
     # --- Cas 1 : flexion + cisaillement ---
