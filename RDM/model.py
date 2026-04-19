@@ -148,18 +148,17 @@ class Model:
     #  Résultats
     # =================================================================
 
-    def internal_forces(self, elem: Element,
-                        nb_points: int = 51) -> Dict[str, np.ndarray]:
+    def internal_forces(self, elem: Element) -> Dict[str, np.ndarray]:
         """Efforts internes le long d'un élément."""
         if not self.is_solved:
             raise RuntimeError("Appeler solve() d'abord")
-        return self._solver.internal_forces(elem, nb_points)
+        return self._solver.internal_forces(elem)
 
-    def all_internal_forces(self, nb_points: int = 51) -> Dict:
+    def all_internal_forces(self) -> Dict:
         """Efforts internes de tous les éléments."""
         if not self.is_solved:
             raise RuntimeError("Appeler solve() d'abord")
-        return self._solver.all_internal_forces(nb_points)
+        return self._solver.all_internal_forces()
 
     @property
     def hyperstaticity(self) -> Tuple[int, str]:

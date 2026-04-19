@@ -388,14 +388,16 @@ class Element:
         d_local = R @ displacements_global
         f_nodal = self.k_local @ d_local - self.equivalent_nodal_forces_local
 
+        print(f"f_nodal E2 = {f_nodal}")
+
         # Efforts aux nœuds : [Nx_i, Vy_i, Mz_i, Nx_j, Vy_j, Mz_j]
         # N(x) = -Nx_i  (constant si pas de charge axiale répartie)
         # V(x) = Vy_i   (constant si pas de charge transversale répartie)
         # M(x) = Mz_i + Vy_i * x (si pas de charge répartie)
 
         N_i = -f_nodal[0]
-        V_i = f_nodal[1]
-        M_i = f_nodal[2]
+        V_i = -f_nodal[1]
+        M_i = -f_nodal[2]
 
         # Ajout de l'effet des charges réparties
         q_y = sum(ld.fy for ld in self._loads if isinstance(ld, DistributedLoad))

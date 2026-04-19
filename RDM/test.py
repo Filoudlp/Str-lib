@@ -531,5 +531,88 @@ def run_all_tests():
 
 
 if __name__ == "__main__":
-    success = run_all_tests()
-    sys.exit(0 if success else 1)
+    #success = run_all_tests()
+    #sys.exit(0 if success else 1)
+
+    L = 10.0
+    F = 5.0     # N
+    E = 1
+    I = 1
+    A = 1
+
+    m = Model()
+    n1 = m.add_node(0, 0, rx=True, ry=True)
+    n2 = m.add_node(L/2, 0, fy=-F)
+    n3 = m.add_node(L, 0, rx=True, ry=True)
+
+    m.add_element(n1, n2, E=E, A=A, I=I)
+    m.add_element(n2, n3, E=E, A=A, I=I)
+    #n2.set_forces(fx=F)
+
+    m.subdivide_all(100)
+    m.solve()
+
+    b = m.all_internal_forces()
+
+    print("Node :", m.nodes)
+    print()
+    print("Element :", m.elements)
+    print()
+    print("Solver :", m.solver)
+    print()
+    print("solved :", m.is_solved)
+    print()
+    print("Summury :", m.summary())
+    print()
+    print("Internal forces :", b)
+
+    x  = 0
+    y  = 0
+
+    import matplotlib.pyplot as plt
+    x_combined = []
+    N_combined = []
+    V_combined = []
+    M_combined = []
+
+    x_offset = 0
+    for elem_name, forces in b.items():
+        x = np.array(forces['x']) + x_offset
+        N = np.array(forces['N']) if hasattr(forces['N'], '__len__') else [forces['N']] * len(x)
+        V = np.array(forces['V']) if hasattr(forces['V'], '__len__') else [forces['V']] * len(x)
+        M = np.array(forces['M']) if hasattr(forces['M'], '__len__') else [forces['M']] * len(x)
+
+        x_combined.extend(x)
+        N_combined.extend(N)
+        V_combined.extend(V)
+        M_combined.extend(M)
+
+        x_offset = x[-1]  # décalage pour l'élément suivant
+
+
+
+ # Plot
+    fig, axes = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
+
+    axes[0].plot(x_combined, N_combined, 'b-o')
+    axes[0].axhline(0, color='k', linewidth=0.5)
+    axes[0].set_ylabel("N [kN]")
+    axes[0].set_title("Effort Normal")
+    axes[0].grid(True)
+
+    axes[1].plot(x_combined, V_combined, 'r-o')
+    axes[1].axhline(0, color='k', linewidth=0.5)
+    axes[1].set_ylabel("V [kN]")
+    axes[1].set_title("Effort Tranchant")
+    axes[1].grid(True)
+
+    axes[2].plot(x_combined, M_combined, 'g-o')
+    axes[2].axhline(0, color='k', linewidth=0.5)
+    axes[2].set_ylabel("M [kN·m]")
+    axes[2].set_xlabel("x [m]")
+    axes[2].set_title("Moment Fléchissant")
+    axes[2].grid(True)
+
+    plt.tight_layout()
+    plt.show()
+

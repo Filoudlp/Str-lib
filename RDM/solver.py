@@ -250,8 +250,7 @@ class Solver:
     #  Efforts internes
     # =================================================================
 
-    def internal_forces(self, elem: Element,
-                        nb_points: int = 51) -> Dict[str, np.ndarray]:
+    def internal_forces(self, elem: Element, is_last: bool = False) -> Dict[str, np.ndarray]:
         """
             Calcule N, V, M le long d'un élément.
             
@@ -284,7 +283,7 @@ class Solver:
             raise RuntimeError("Appeler solve() avant internal_forces()")
 
         L = elem.length
-        x_arr = np.linspace(0, L, nb_points)
+        #x_arr = np.linspace(elem.node_i.x, elem.node_j.x, 2)
 
         # Récupérer les déplacements globaux des 2 nœuds
         d_global = self._element_displacements(elem)
@@ -293,6 +292,8 @@ class Solver:
         R = elem.rotation_matrix
         d_local = R @ d_global
         f_nodal = elem.k_local @ d_local - elem.equivalent_nodal_forces_local
+
+        print(f_nodal)
 
         # Efforts au nœud i (convention : N = traction positive)
         #   f_nodal = [Fx_i, Fy_i, Mz_i, Fx_j, Fy_j, Mz_j]
@@ -303,24 +304,26 @@ class Solver:
         V_i = f_nodal[1]
         M_i = f_nodal[2]
 
+
         # Charges réparties (pour l'intégration le long de la barre)
         from .loads import DistributedLoad
         q_x = sum(ld.fx for ld in elem.loads if isinstance(ld, DistributedLoad))
         q_y = sum(ld.fy for ld in elem.loads if isinstance(ld, DistributedLoad))
 
+
         # Efforts le long de la barre
-        N_arr = N_i + q_x * x_arr
-        V_arr = V_i - q_y * x_arr
-        M_arr = M_i + V_i * x_arr - q_y * x_arr**2 / 2
+        N_arr = N_i + q_x * L
+        V_arr = V_i - q_y * L
+        M_arr = M_i + V_i * L - q_y * L**2 / 2
 
         return {
-            'x': x_arr,
+            'x': [0, L],
             'N': N_arr,
             'V': V_arr,
             'M': M_arr,
         }
 
-    def all_internal_forces(self, nb_points: int = 51) -> Dict[str, Dict[str, np.ndarray]]:
+    def all_internal_forces(self) -> Dict[str, Dict[str, np.ndarray]]:
         """
             Calcule les efforts internes de TOUS les éléments.
             
@@ -332,10 +335,16 @@ class Solver:
         if not self._is_solved:
             raise RuntimeError("Appeler solve() avant all_internal_forces()")
 
-        return {
-            elem.name: self.internal_forces(elem, nb_points)
-            for elem in self._elements
-        }
+        elements = list(self._elements)
+        result = {}
+        for i, elem in enumerate(elements):
+            is_last = (i == len(elements) - 1)
+            result[elem.name] = self.internal_forces(elem, is_last=is_last)
+        return result  
+      #  return {
+      #      elem.name: self.internal_forces(elem)
+       #     for elem in self._elements
+        #}
 
     # =================================================================
     #  Indexation
