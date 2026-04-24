@@ -238,7 +238,6 @@ class Shear:
             unit="-",
             ref="EC3-1-1 — §6.2.6 (1)",
             is_check=True,
-            status=self.is_ok,
         )
 
     @property

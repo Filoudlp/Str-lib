@@ -542,14 +542,15 @@ if __name__ == "__main__":
 
     m = Model()
     n1 = m.add_node(0, 0, rx=True, ry=True)
-    n2 = m.add_node(L/2, 0, fy=-F)
+    #n2 = m.add_node(L/2, 0, fy=-F)
     n3 = m.add_node(L, 0, rx=True, ry=True)
 
-    m.add_element(n1, n2, E=E, A=A, I=I)
-    m.add_element(n2, n3, E=E, A=A, I=I)
+    ab = m.add_element(n1, n3, E=E, A=A, I=I)
+    #m.add_element(n2, n3, E=E, A=A, I=I)
+    ab.add_load(DistributedLoad(fy=-F))
     #n2.set_forces(fx=F)
 
-    m.subdivide_all(100)
+    m.subdivide_all(50)
     m.solve()
 
     b = m.all_internal_forces()
