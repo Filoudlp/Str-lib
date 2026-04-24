@@ -61,22 +61,6 @@ class FormulaResult:
     limit: float = 1.0
 
     # -- Propriétés ----------------------------------------------------------
-
-    @property
-    def status(self) -> Optional[str]:
-        """Statut de la vérification.
-
-        Returns
-        -------
-        str or None
-            ``"OK ✓"`` si *result* ≤ *limit*,
-            ``"NON VÉRIFIÉ ✗"`` sinon,
-            ``None`` si ce n'est pas une vérification.
-        """
-        if not self.is_check:
-            return None
-        return "OK ✓" if self.result <= self.limit else "NON VÉRIFIÉ ✗"
-
     @property
     def is_ok(self) -> Optional[bool]:
         """La vérification est-elle satisfaite ?
@@ -131,7 +115,6 @@ class FormulaResult:
             "ref": self.ref,
             "is_check": self.is_check,
             "limit": self.limit,
-            "status": self.status,
         }
 
 
