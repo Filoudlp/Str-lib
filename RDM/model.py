@@ -148,17 +148,39 @@ class Model:
     #  Résultats
     # =================================================================
 
-    def internal_forces(self, elem: Element) -> Dict[str, np.ndarray]:
+    def internal_forces(self, elem: Element, nb_points: int = 50) -> Dict[str, np.ndarray]:
         """Efforts internes le long d'un élément."""
         if not self.is_solved:
             raise RuntimeError("Appeler solve() d'abord")
-        return self._solver.internal_forces(elem)
+        return self._solver.internal_forces(elem, nb_points=nb_points)
 
-    def all_internal_forces(self) -> Dict:
+    def all_internal_forces(self, nb_points: int = 50) -> Dict:
         """Efforts internes de tous les éléments."""
         if not self.is_solved:
             raise RuntimeError("Appeler solve() d'abord")
-        return self._solver.all_internal_forces()
+        return self._solver.all_internal_forces(nb_points=nb_points)
+    
+    def displacements(self, elem: Element, nb_points: int = 50) -> Dict[str, np.ndarray]:
+        """
+        Déplacements le long d'un élément.
+        
+        Returns
+        -------
+        dict avec clés :
+            'x'     : np.ndarray — abscisses locales (0 à L)
+            'u'     : np.ndarray — déplacement axial
+            'v'     : np.ndarray — déplacement transversal
+            'theta' : np.ndarray — rotation
+        """
+        if not self.is_solved:
+            raise RuntimeError("Appeler solve() d'abord")
+        return self._solver.displacements(elem, nb_points=nb_points)
+
+    def all_displacements(self, nb_points: int = 50) -> Dict:
+        """Déplacements de tous les éléments."""
+        if not self.is_solved:
+            raise RuntimeError("Appeler solve() d'abord")
+        return self._solver.all_displacements(nb_points=nb_points)
 
     @property
     def hyperstaticity(self) -> Tuple[int, str]:
@@ -199,9 +221,16 @@ class Model:
                 r = n.results
                 lines.append(
                     f"  {n.name:>6s} : "
+                    f"x = {n.x:+.4f} mm  "
                     f"dx={r.dx:+.4f} mm  "
                     f"dy={r.dy:+.4f} mm  "
                     f"θ={r.theta:+.6f} rad"
+                    f"Rx={r.rx:+.1f} N  "
+                    f"Ry={r.ry:+.1f} N  "
+                    f"Mz={r.mz:+.1f} N·mm"
+                    f"N={r.n:+.1f} N  "
+                    f"V={r.v:+.1f} N  "
+                    f"M={r.m:+.1f} N·mm"
                 )
 
             lines.append("")

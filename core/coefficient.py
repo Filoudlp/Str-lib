@@ -97,11 +97,7 @@ class EC2Params:
     alpha_ct: float = 1.0
     k1: float = 0.6
     k2: float = 0.45
-    cnom_min_dur: dict[str, float] = field(default_factory=lambda: {
-        "X0": 10, "XC1": 15, "XC2": 25, "XC3": 25, "XC4": 30,
-        "XD1": 35, "XD2": 40, "XD3": 45,
-        "XS1": 35, "XS2": 40, "XS3": 45,
-    })
+
 
 
 @dataclass(frozen=True)

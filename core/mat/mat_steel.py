@@ -13,7 +13,7 @@
         - UK : Royaume-Uni
 """
 
-__all__ = ['MatSteel', 'SteelCoefficients']
+__all__ = ['MatSteel']
 
 from dataclasses import dataclass
 from typing import Optional
@@ -27,47 +27,147 @@ from core.coefficient import NationalAnnex, Country
 # Registre des nuances d'acier — EC3 Table 3.1
 # =============================================================================
 
-# {nuance: {épaisseur_max: (fy, fu)}} # Need to be complet with the full table from EC3
-_STEEL_GRADES: dict[str, dict[float, tuple[float, float]]] = {
-    "S235": {
-        40:  (235, 360),
-        80:  (215, 360),
+# EN 1993-1-1 — Tableau 3.1
+# Structure : {norme: {nuance: {épaisseur_max: (fy, fu)}}}
+# (fy, fu) en [N/mm²] — None si non spécifié par la norme
+
+_STEEL_GRADES: dict[str, dict[str, dict[float, tuple[float, float]]]] = {
+
+    # ----------------------------------------------------------------
+    # Aciers laminés à chaud
+    # ----------------------------------------------------------------
+
+    "EN 10025-2": {
+        "S 235":        {40: (235, 360), 80: (215, 360)},
+        "S 275":        {40: (275, 430), 80: (255, 410)},
+        "S 355":        {40: (355, 490), 80: (335, 470)},
+        "S 450":        {40: (440, 550), 80: (410, 550)},
     },
-    "S275": {
-        50:  (275, 430),
-        80:  (255, 410),
+
+    "EN 10025-3": {
+        "S 275 N/NL":   {40: (275, 390), 80: (255, 370)},
+        "S 355 N/NL":   {40: (355, 490), 80: (335, 470)},
+        "S 420 N/NL":   {40: (420, 520), 80: (390, 520)},
+        "S 460 N/NL":   {40: (460, 540), 80: (430, 540)},
     },
-    "S355": {
-        40:  (355, 490),
-        80:  (335, 470),
+
+    "EN 10025-4": {
+        "S 275 M/ML":   {40: (275, 370), 80: (255, 360)},
+        "S 355 M/ML":   {40: (355, 470), 80: (335, 450)},
+        "S 420 M/ML":   {40: (420, 520), 80: (390, 500)},
+        "S 460 M/ML":   {40: (460, 540), 80: (430, 530)},
     },
-    "S450": {
-        40:  (440, 550),
-        80:  (410, 550),
+
+    "EN 10025-5": {
+        "S 235 W":      {40: (235, 360), 80: (215, 340)},
+        "S 355 W":      {40: (355, 490), 80: (335, 490)},
+    },
+
+    "EN 10025-6": {
+        "S 460 Q/QL/QL1": {40: (460, 570), 80: (440, 550)},
+    },
+
+    # ----------------------------------------------------------------
+    # Profils creux de construction — à chaud
+    # ----------------------------------------------------------------
+
+    "EN 10210-1": {
+        "S 235 H":      {40: (235, 360), 80: (215, 340)},
+        "S 275 H":      {40: (275, 430), 80: (255, 410)},
+        "S 355 H":      {40: (355, 510), 80: (335, 490)},
+        "S 275 NH/NLH": {40: (275, 390), 80: (255, 370)},
+        "S 355 NH/NLH": {40: (355, 490), 80: (335, 470)},
+        "S 420 NH/NHL": {40: (420, 540), 80: (390, 520)},
+        "S 460 NH/NLH": {40: (460, 560), 80: (430, 550)},
+    },
+
+    # ----------------------------------------------------------------
+    # Profils creux de construction — à froid
+    # ----------------------------------------------------------------
+
+    "EN 10219-1": {
+        "S 235 H":      {40: (235, 360), 80: (None, None)},
+        "S 275 H":      {40: (275, 430), 80: (None, None)},
+        "S 355 H":      {40: (355, 510), 80: (None, None)},
+        "S 275 NH/NLH": {40: (275, 370), 80: (None, None)},
+        "S 355 NH/NLH": {40: (355, 470), 80: (None, None)},
+        "S 420 NH/NLH": {40: (460, 550), 80: (None, None)},
+        "S 275 MH/MLH": {40: (275, 360), 80: (None, None)},
+        "S 355 MH/MLH": {40: (355, 470), 80: (None, None)},
+        "S 420 MH/MLH": {40: (420, 500), 80: (None, None)},
+        "S 460 MH/MLH": {40: (460, 530), 80: (None, None)},
     },
 }
 
-def _get_fy_fu(grade: str, thickness: float) -> tuple[float, float]:
-    """
-    Retourne (fy, fu) selon la nuance et l'épaisseur.
 
-    :param grade: Nuance d'acier (ex: "S355")
-    :param thickness: Épaisseur de l'élément [mm]
-    :raises ValueError: Si la nuance ou l'épaisseur n'est pas supportée
+def _get_fy_fu(
+    grade: str,
+    thickness: float,
+    norme: str = "EN 10025-2"
+) -> tuple[float, float]:
     """
-    grade = grade.upper()
-    if grade not in _STEEL_GRADES:
-        raise ValueError(
-            f"Nuance '{grade}' non supportée. "
-            f"Choix possibles : {list(_STEEL_GRADES.keys())}"
+    Retourne (fy, fu) selon la norme, nuance et l'épaisseur.
+
+    Réf : EN 1993-1-1 — Tableau 3.1
+
+    :param grade:     Nuance d'acier (ex: "S355", "S 355", "S355H", "S 355 H")
+    :param thickness: Épaisseur de l'élément [mm]
+    :param norme:     Norme produit (défaut: "EN 10025-2")
+    :return:          Tuple (fy [N/mm²], fu [N/mm²])
+    :raises KeyError:  Si la norme n'existe pas
+    :raises KeyError:  Si la nuance n'existe pas pour cette norme
+    :raises ValueError: Si l'épaisseur est hors limites
+    :raises ValueError: Si les valeurs ne sont pas définies pour cette épaisseur
+    """
+    # Validation norme
+    if norme not in _STEEL_GRADES:
+        available_normes = list(_STEEL_GRADES.keys())
+        raise KeyError(
+            f"Norme '{norme}' non disponible.\n"
+            f"Normes disponibles : {available_normes}"
         )
-    thresholds = _STEEL_GRADES[grade]
+
+    # Normaliser la nuance
+    # 1. Supprimer espaces inutiles + majuscules
+    # 2. Ajouter espaces après "S" si absent
+    grade_normalized = grade.strip().upper()
+    
+    # Insérer un espace après "S" s'il n'y en a pas
+    if grade_normalized.startswith("S") and len(grade_normalized) > 1:
+        if grade_normalized[1] != " ":
+            grade_normalized = "S " + grade_normalized[1:]
+
+    # Validation nuance pour cette norme
+    if grade_normalized not in _STEEL_GRADES[norme]:
+        available_grades = list(_STEEL_GRADES[norme].keys())
+        raise KeyError(
+            f"Nuance '{grade}' non disponible pour {norme}.\n"
+            f"Nuances disponibles : {available_grades}"
+        )
+
+    # Récupérer les paliers d'épaisseur pour cette nuance
+    thresholds = _STEEL_GRADES[norme][grade_normalized]
+
+    # Parcourir les seuils d'épaisseur (triés)
     for t_max in sorted(thresholds.keys()):
         if thickness <= t_max:
-            return thresholds[t_max]
+            fy, fu = thresholds[t_max]
+
+            # Vérifier que les valeurs sont définies
+            if fy is None or fu is None:
+                raise ValueError(
+                    f"Valeurs non définies pour {grade} ({norme}) "
+                    f"à épaisseur t={thickness} mm.\n"
+                    f"Cette combinaison n'est pas couverte par la norme."
+                )
+
+            return fy, fu
+
+    # Épaisseur hors limites
+    max_thickness = max(thresholds.keys())
     raise ValueError(
-        f"Épaisseur {thickness} mm hors limites pour la nuance {grade}. "
-        f"Épaisseur max : {max(thresholds.keys())} mm"
+        f"Épaisseur t={thickness} mm hors limites pour {grade} ({norme}).\n"
+        f"Épaisseur maximale : {max_thickness} mm"
     )
 
 
@@ -83,12 +183,45 @@ class MatSteel(Material):
         - Par nuance et épaisseur : MatSteel(grade="S355", thickness=20)
         - Par valeurs directes    : MatSteel(fy=345, fu=490)
 
-    :param grade: Nuance d'acier ("S235", "S275", "S355", "S460")
-    :param thickness: Épaisseur de l'élément [mm] (pour déterminer fy/fu)
-    :param fy: Limite d'élasticité [MPa] (prioritaire sur grade)
-    :param fu: Résistance ultime en traction [MPa] (prioritaire sur grade)
-    :param country: Code pays de l'Annexe Nationale
-    :param coefficients: Coefficients personnalisés (prioritaire sur country)
+    :param grade:        Nuance d'acier ("S235", "S275", "S355", "S460", etc.)
+                         Format accepté : "S355" ou "S 355" (espaces ignorés)
+    :param thickness:    Épaisseur de l'élément [mm] (pour déterminer fy/fu).
+                         Défaut : 16 mm
+    :param fy:           Limite d'élasticité [MPa] (prioritaire sur grade/thickness)
+    :param fu:           Résistance ultime en traction [MPa] (prioritaire sur grade/thickness)
+    :param country:      Code pays pour l'Annexe Nationale de EN 1993-1-1.
+                         Choix : "FR" (défaut), "DE", "UK", "NL", etc.
+                         Impacte les coefficients partiels (γM0, γM1, γM2).
+    :param coefficients: Coefficients partiels personnalisés (SteelCoefficients).
+                         Prioritaire sur country.
+    :param norme:        Norme produit acier selon EN 1993-1-1 — Tableau 3.1.
+                         Choix : "EN 10025-2" (défaut - laminés à chaud),
+                                 "EN 10025-3" (N/NL),
+                                 "EN 10025-4" (M/ML),
+                                 "EN 10025-5" (W),
+                                 "EN 10025-6" (Q/QL),
+                                 "EN 10210-1" (profils creux - à chaud),
+                                 "EN 10219-1" (profils creux - formés à froid).
+                         Utilisée pour le lookup (grade, thickness) → (fy, fu).
+
+    :raises KeyError:    Si norme ou grade invalide
+    :raises ValueError:  Si épaisseur hors limites pour la nuance/norme
+
+    Exemple
+    -------
+    >>> # Mode 1 : Par nuance (récupère fy/fu du tableau)
+    >>> acier = MatSteel(grade="S355", thickness=30, country="FR")
+    >>> acier.fy
+    355.0
+
+    >>> # Mode 2 : Par valeurs directes
+    >>> acier = MatSteel(fy=345, fu=490)
+    >>> acier.fy
+    345.0
+
+    >>> # Mode 3 : Norme produit spécifique
+    >>> acier = MatSteel(grade="S 275 H", thickness=50, norme="EN 10210-1")
+    >>> # Récupère fy/fu pour profils creux EN 10210-1
     """
 
     _DEFAULT_E = 210000.0       # MPa
@@ -104,6 +237,7 @@ class MatSteel(Material):
         fu: Optional[float] = None,
         country: str = "FR",
         coefficients: Optional[SteelCoefficients] = None,
+        norme: str = "EN 10025-2"
     ) -> None:
 
         # -- Résistances --
@@ -115,7 +249,7 @@ class MatSteel(Material):
         elif grade is not None:
             self._grade = grade.upper()
             self._thickness = thickness
-            self._fy, self._fu = _get_fy_fu(self._grade, self._thickness)
+            self._fy, self._fu = _get_fy_fu(self._grade, self._thickness, norme)
         else:
             raise ValueError(
                 "Fournir soit (grade + thickness), soit (fy + fu)."
@@ -188,12 +322,12 @@ class MatSteel(Material):
         return self._thickness
 
     @thickness.setter
-    def thickness(self, value: float) -> None:
+    def thickness(self, value: float, norme: str = "EN 10025-2") -> None:
         """Permet de changer l'épaisseur et mettre à jour fy/fu en conséquence.
         Note : La nuance doit être définie pour que cela fonctionne."""
         self._thickness = value
         if self._grade is not None:
-            self._fy, self._fu = _get_fy_fu(self._grade, self._thickness)
+            self._fy, self._fu = _get_fy_fu(self._grade, self._thickness, norme)
         else:
             raise ValueError(
                 "La nuance doit être définie pour mettre à jour fy/fu lors du changement d'épaisseur."

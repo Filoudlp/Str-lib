@@ -30,13 +30,6 @@ from utility.lookupinjson import get_section
 
 
 # =============================================================================
-# Chemin par défaut vers le fichier JSON des profilés
-# =============================================================================
-
-_DEFAULT_DB_PATH = Path(__file__).parent / "data" / "profiles_ihu.json"
-
-
-# =============================================================================
 # SecIHU
 # =============================================================================
 
@@ -83,18 +76,16 @@ class SecIHU(Section):
     def __init__(
         self,
         name: str,
-        db_path: Optional[str | Path] = None,
+        sec_data: Optional[Section] = None,
         **kwargs,
     ) -> None:
 
         # --- Chargement depuis JSON si un nom est fourni ---
         data: dict = {}
         if not kwargs:
-            data = get_section(db_path, name)
+            data = sec_data
         elif kwargs:
             data.update(kwargs)
-        else:
-            data = dict(kwargs)
 
         # --- Masse linéaire ---
         self._G: float = data.get("G", 0.0) 
@@ -118,21 +109,12 @@ class SecIHU(Section):
         self._inertia_z: float = data.get("Iz", 0.0)
 
         # --- Modules élastiques ---
-        if db_path:
-            self._wel_y: float = data.get("Wel,y", 0.0)
-            self._wel_z: float = data.get("Wel,z", 0.0)
-        else:
-            self._wel_y: float = data.get("wel_y", 0.0)
-            self._wel_z: float = data.get("wel_z", 0.0)
+        self._wel_y: float = data.get("wel_y", 0.0)
+        self._wel_z: float = data.get("wel_z", 0.0)
         
-
         # --- Modules plastiques ---
-        if db_path:
-            self._wpl_y: float = data.get("Wpl,y", 0.0)
-            self._wpl_z: float = data.get("Wpl,z", 0.0)
-        else:
-            self._wpl_y: float = data.get("wpl_y", 0.0)
-            self._wpl_z: float = data.get("wpl_z", 0.0)
+        self._wpl_y: float = data.get("wpl_y", 0.0)
+        self._wpl_z: float = data.get("wpl_z", 0.0)
 
         # --- Rayons de giration ---
         self._iy: float = data.get("iy", 0.0)
@@ -677,27 +659,30 @@ class SecIHU(Section):
 if __name__ == "__main__":
 
     # --- Mode kwargs (sans JSON) ---
-    ipe300 = SecIHU(
-        name="IPE 300",
-        h=300, b=150, tw=7.1, tf=10.7, r=15,
-        A=5381,
-        Avz=2568,
-        Iy=83560000,
-        Iz=6038000,
-        wel_y=557100,
-        wel_z=80510,
-        wpl_y=628400,
-        wpl_z=125200,
-        iy=124.6,
-        iz=33.5,
-        It=201000,
-        Iw=126000000000,
-    )
+    # ipe300 = SecIHU(
+    #     name="IPE 300",
+    #     h=300, b=150, tw=7.1, tf=10.7, r=15,
+    #     A=5381,
+    #     Avz=2568,
+    #     Iy=83560000,
+    #     Iz=6038000,
+    #     wel_y=557100,
+    #     wel_z=80510,
+    #     wpl_y=628400,
+    #     wpl_z=125200,
+    #     iy=124.6,
+    #     iz=33.5,
+    #     It=201000,
+    #     Iw=126000000000,
+    # )
 
-   # with open("ressource/IPE.json", "r", encoding="utf-8") as f:
-    #    data = json.load(f)
+    with open("ressource/IPE.json", "r", encoding="utf-8") as f:
+        data = json.load(f)
 
-    #ipe300 = SecIHU("IPE AA 80",data)
+    sec = "IPE A 300"
+    data = get_section(data, sec)
+
+    ipe300 = SecIHU(sec, data)
     print(ipe300)
     print()
 

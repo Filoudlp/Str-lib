@@ -3,5 +3,30 @@ requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "strlibV01"
+name = "strlib"
 version = "0.1.0"
+description = "Librairie de calcul structure"
+requires-python = ">=3.10"
+readme = "README.md"
+license = {file = "LICENSE"}
+
+authors = [
+    {name = "Alexandre FAIA", email = "alexandre.faia@calexstructure.com"}
+]
+
+# Dépendances de ta librairie
+dependencies = [
+    "numpy>=1.24",
+    "pandas>=2.0",
+]
+
+#[project.optional-dependencies]
+# Dépendances pour les tests uniquement
+#dev = [
+ #   "pytest",
+ #   "pytest-cov",
+#]
+
+#[tool.setuptools.packages.find]
+#where = ["."]
+#exclude = ["tests*"]        # exclure le dossier tests

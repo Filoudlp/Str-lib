@@ -13,7 +13,7 @@
         - UK : Royaume-Uni
 """
 
-__all__ = ['MatReinforcement', 'ReinforcementCoefficients']
+__all__ = ['MatReinforcement']
 
 from dataclasses import dataclass
 from typing import Optional
@@ -21,6 +21,7 @@ from typing import Optional
 from core.mat.materials import Material
 from core.formula import FormulaResult
 from core.coefficient import NationalAnnex, Country
+from enum import Enum
 
 
 # =============================================================================
@@ -45,6 +46,21 @@ _DUCTILITY_CLASSES: dict[str, _DuctilityData] = {
     "C": _DuctilityData(k_min=1.15, epsilon_uk=75e-3),
 }
 
+class SteelDiagram(Enum):
+    """Type de diagramme contrainte-déformation — EC2 §3.2.7"""
+    HORIZONTAL = "horizontal"   # palier horizontal à fyd
+    INCLINED   = "inclined"     # branche inclinée avec écrouissage
+
+    @classmethod
+    def validate(cls, value) -> "SteelDiagram":
+        if isinstance(value, cls):
+            return value
+        if value not in cls.__members__:
+            raise ValueError(
+                f"Diagramme '{value}' non supporté. "
+                f"Choix possibles : {list(cls.__members__.keys())}"
+            )
+        return cls[value]
 
 # =============================================================================
 # Classe principale
@@ -80,6 +96,7 @@ class MatReinforcement(Material):
         ductility_class: str = "B",
         country: str = "FR",
         coefficients: Optional[SteelCoefficients] = None,
+        diagram: SteelDiagram = SteelDiagram.INCLINED,
     ) -> None:
         # ----- Validation classe de ductilité -----
         ductility_class = ductility_class.upper()
@@ -132,6 +149,14 @@ class MatReinforcement(Material):
     # =================================================================
     # Setters dynamiques
     # =================================================================
+
+    @property
+    def diagram(self) -> SteelDiagram:
+        return self._diagram
+
+    @diagram.setter
+    def diagram(self, value: SteelDiagram):
+        self._diagram = SteelDiagram.validate(value)
 
     @property
     def fyk(self) -> float:
@@ -367,6 +392,80 @@ class MatReinforcement(Material):
             unit="-",
             ref="EC2 — §3.2.7(4)",
         )
+
+    # ---- sigma_sc ----
+
+    def sigma_sc(self, epsilon_sc: float) -> float:
+        """
+        Contrainte de calcul dans l'acier comprimé σsc [MPa] — EC2 §3.2.7
+
+        :param epsilon_sc: Déformation de calcul dans l'acier comprimé [-]
+        :return:           Contrainte σsc [MPa]
+        """
+        if epsilon_sc < 0:
+            raise ValueError(f"εsc doit être positif, reçu : {epsilon_sc}")
+
+        # Domaine élastique
+        if epsilon_sc <= self.epsilon_yd:
+            return self._Es * epsilon_sc
+
+        # Domaine plastique — diagramme horizontal
+        if self._diagram == SteelDiagram.HORIZONTAL:
+            return self.fyd
+
+        # Domaine plastique — diagramme incliné (écrouissage)
+        if epsilon_sc >= self.epsilon_ud:
+            return self._k * self.fyd  # plafonné à εud
+
+        return self.fyd * (
+            1 + (self._k - 1)
+            * (epsilon_sc - self.epsilon_yd)
+            / (self.epsilon_ud - self.epsilon_yd)
+        )
+
+
+    def sigma_sc_report(self, epsilon_sc: float, with_values: bool = False) -> FormulaResult:
+        """FormulaResult pour σsc — EC2 §3.2.7"""
+        r = self.sigma_sc(epsilon_sc)  # epsilon_sc passé en paramètre
+
+        if epsilon_sc <= self.epsilon_yd:
+            formula = "σsc = Es · εsc"
+            fv = (
+                f"σsc = {self._Es:.0f} × {epsilon_sc * 1000:.4f}‰"
+                f" = {r:.2f} MPa  (domaine élastique)"
+            ) if with_values else ""
+
+        elif self._diagram == SteelDiagram.HORIZONTAL:
+            formula = "σsc = fyd"
+            fv = (
+                f"σsc = fyd = {r:.2f} MPa  (domaine plastique — diagramme horizontal)"
+            ) if with_values else ""
+
+        elif epsilon_sc >= self.epsilon_ud:
+            formula = "σsc = k · fyd"
+            fv = (
+                f"σsc = {self._k:.2f} × {self.fyd:.2f}"
+                f" = {r:.2f} MPa  (plafonné à εud)"
+            ) if with_values else ""
+
+        else:
+            formula = "σsc = fyd · [1 + (k-1) · (εsc - εyd) / (εud - εyd)]"
+            fv = (
+                f"σsc = {self.fyd:.2f} × [1 + ({self._k:.2f} - 1)"
+                f" × ({epsilon_sc * 1000:.4f}‰ - {self.epsilon_yd * 1000:.4f}‰)"
+                f" / ({self.epsilon_ud * 1000:.4f}‰ - {self.epsilon_yd * 1000:.4f}‰)]"
+                f" = {r:.2f} MPa  (écrouissage)"
+            ) if with_values else ""
+
+        return FormulaResult(
+            name="σsc",
+            formula=formula,
+            formula_values=fv,
+            result=r,
+            unit="MPa",
+            ref="EC2 — §3.2.7",
+        )
+
 
     # =================================================================
     # Rapport complet

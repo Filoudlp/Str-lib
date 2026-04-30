@@ -534,38 +534,48 @@ if __name__ == "__main__":
     #success = run_all_tests()
     #sys.exit(0 if success else 1)
 
-    L = 10.0
+    L = 4
     F = 5.0     # N
     E = 1
     I = 1
     A = 1
 
     m = Model()
-    n1 = m.add_node(0, 0, rx=True, ry=True)
-    #n2 = m.add_node(L/2, 0, fy=-F)
-    n3 = m.add_node(L, 0, rx=True, ry=True)
+    n1 = m.add_node(0, 0, rx=True, ry=True, rz=False)
+    n2 = m.add_node(1, 0, rx=True, ry=True, rz=False)
+    n3 = m.add_node(2, 0, rx=True, ry=True, rz=False)
+    n4 = m.add_node(3, 0, rx=True, ry=True, rz=False)
+    n5 = m.add_node(4, 0, rx=True, ry=True, rz=False)
 
-    ab = m.add_element(n1, n3, E=E, A=A, I=I)
-    #m.add_element(n2, n3, E=E, A=A, I=I)
-    ab.add_load(DistributedLoad(fy=-F))
-    #n2.set_forces(fx=F)
+    ab1 = m.add_element(n1, n2, E=E, A=A, I=I)
+    ab2 = m.add_element(n2, n3, E=E, A=A, I=I)
+    ab3 = m.add_element(n3, n4, E=E, A=A, I=I)
+    ab4 = m.add_element(n4, n5, E=E, A=A, I=I)
 
-    m.subdivide_all(50)
+    ab1.add_load(DistributedLoad(fy=-F))
+    ab2.add_load(DistributedLoad(fy=-F))
+    ab3.add_load(DistributedLoad(fy=-F))
+    ab4.add_load(DistributedLoad(fy=-F))
+
+
     m.solve()
 
-    b = m.all_internal_forces()
+    internal_force = m.all_internal_forces(10)
+    internal_displacement = m.all_displacements(10)
 
-    print("Node :", m.nodes)
-    print()
-    print("Element :", m.elements)
-    print()
-    print("Solver :", m.solver)
-    print()
-    print("solved :", m.is_solved)
-    print()
-    print("Summury :", m.summary())
-    print()
-    print("Internal forces :", b)
+    # print("Node :", m.nodes)
+    # print()
+    # print("Element :", m.elements)
+    # print()
+    # print("Solver :", m.solver)
+    # print()
+    # print("solved :", m.is_solved)
+    # print()
+    # print("Summury :", m.summary())
+    # print()
+    # print("Internal forces :", internal_force)
+    # print()
+    print("Internal displacements :", internal_displacement)
 
     x  = 0
     y  = 0
@@ -576,8 +586,13 @@ if __name__ == "__main__":
     V_combined = []
     M_combined = []
 
+    x2_combined = []
+    u_combined = []
+    v_combined = []
+    theta_combined = []
+
     x_offset = 0
-    for elem_name, forces in b.items():
+    for elem_name, forces in internal_force.items():
         x = np.array(forces['x']) + x_offset
         N = np.array(forces['N']) if hasattr(forces['N'], '__len__') else [forces['N']] * len(x)
         V = np.array(forces['V']) if hasattr(forces['V'], '__len__') else [forces['V']] * len(x)
@@ -589,11 +604,25 @@ if __name__ == "__main__":
         M_combined.extend(M)
 
         x_offset = x[-1]  # décalage pour l'élément suivant
+    
+    x_offset2 = 0
+    for elem_name, forces in internal_displacement.items():
+        x = np.array(forces['x']) + x_offset2
+        u = np.array(forces['u']) if hasattr(forces['u'], '__len__') else [forces['u']] * len(x)
+        v = np.array(forces['v']) if hasattr(forces['v'], '__len__') else [forces['v']] * len(x)
+        theta = np.array(forces['theta']) if hasattr(forces['theta'], '__len__') else [forces['theta']] * len(x)
+
+        x2_combined.extend(x)
+        u_combined.extend(u)
+        v_combined.extend(v)
+        theta_combined.extend(theta)
+
+        x_offset2 = x[-1]  # décalage pour l'élément suivant
 
 
 
  # Plot
-    fig, axes = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
+    fig, axes = plt.subplots(6, 1, figsize=(10, 8), sharex=True)
 
     axes[0].plot(x_combined, N_combined, 'b-o')
     axes[0].axhline(0, color='k', linewidth=0.5)
@@ -608,12 +637,35 @@ if __name__ == "__main__":
     axes[1].grid(True)
 
     axes[2].plot(x_combined, M_combined, 'g-o')
+    axes[2].invert_yaxis()
     axes[2].axhline(0, color='k', linewidth=0.5)
     axes[2].set_ylabel("M [kN·m]")
     axes[2].set_xlabel("x [m]")
     axes[2].set_title("Moment Fléchissant")
     axes[2].grid(True)
 
+    axes[3].plot(x2_combined, u_combined, 'g-o')
+    axes[3].axhline(0, color='k', linewidth=0.5)
+    axes[3].set_ylabel("u [m]")
+    axes[3].set_xlabel("x [m]")
+    axes[3].set_title("Déplacement Axial")
+    axes[3].grid(True)
+
+    axes[4].plot(x2_combined, v_combined, 'g-o')
+    axes[4].axhline(0, color='k', linewidth=0.5)
+    axes[4].set_ylabel("v [m]")
+    axes[4].set_xlabel("x [m]")
+    axes[4].set_title("Déplacement Transversal")
+    axes[4].grid(True)
+
+    axes[5].plot(x2_combined, theta_combined, 'g-o')
+    axes[5].axhline(0, color='k', linewidth=0.5)
+    axes[5].set_ylabel("θ [rad]")
+    axes[5].set_xlabel("x [m]")
+    axes[5].set_title("Rotation")
+    axes[5].grid(True)
+
     plt.tight_layout()
     plt.show()
+
 

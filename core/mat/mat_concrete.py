@@ -13,7 +13,7 @@
         - UK : Royaume-Uni
 """
 
-__all__ = ['MatConcrete', 'ConcreteCoefficients']
+__all__ = ['MatConcrete']
 
 import math
 from dataclasses import dataclass

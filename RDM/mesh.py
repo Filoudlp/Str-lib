@@ -120,10 +120,19 @@ class Mesh:
             new_elements.append(sub_elem)
 
         # Mettre à jour les listes globales
+        # if elem in self._elements:
+        #     self._elements.remove(elem)
+        # self._nodes.extend(new_nodes)
+        # self._elements.extend(new_elements)
         if elem in self._elements:
+            idx_elem = self._elements.index(elem)
             self._elements.remove(elem)
-        self._nodes.extend(new_nodes)
-        self._elements.extend(new_elements)
+            self._elements[idx_elem:idx_elem] = new_elements
+
+        idx_ni = self._nodes.index(ni)
+        idx_nj = self._nodes.index(nj)
+        insert_idx = max(idx_ni, idx_nj)
+        self._nodes[insert_idx:insert_idx] = new_nodes
 
         return new_nodes, new_elements
 

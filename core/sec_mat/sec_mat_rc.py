@@ -213,27 +213,6 @@ STRUCTURAL_CLASSES: dict[str, dict] = {
 }
 
 
-# --- Enrobage minimal cmin,dur (mm) EC2 Tableau 4.4N ---
-# Lignes = classe structurale, Colonnes = classe d'exposition
-# Note : les valeurs dépendent de l'annexe nationale, celles-ci sont les
-# valeurs recommandées par l'EC2.
-CNOM_MIN_TABLE: dict[str, dict[str, int]] = {
-    #           X0  XC1  XC2  XC3  XC4  XD1  XD2  XD3  XS1  XS2  XS3
-    "S1":  {"X0": 10, "XC1": 10, "XC2": 10, "XC3": 10, "XC4": 15,
-            "XD1": 20, "XD2": 25, "XD3": 30, "XS1": 20, "XS2": 25, "XS3": 30},
-    "S2":  {"X0": 10, "XC1": 10, "XC2": 15, "XC3": 20, "XC4": 20,
-            "XD1": 25, "XD2": 30, "XD3": 35, "XS1": 25, "XS2": 30, "XS3": 35},
-    "S3":  {"X0": 10, "XC1": 10, "XC2": 20, "XC3": 20, "XC4": 25,
-            "XD1": 30, "XD2": 35, "XD3": 40, "XS1": 30, "XS2": 35, "XS3": 40},
-    "S4":  {"X0": 10, "XC1": 15, "XC2": 25, "XC3": 25, "XC4": 30,
-            "XD1": 35, "XD2": 40, "XD3": 45, "XS1": 35, "XS2": 40, "XS3": 45},
-    "S5":  {"X0": 15, "XC1": 20, "XC2": 30, "XC3": 30, "XC4": 35,
-            "XD1": 40, "XD2": 45, "XD3": 50, "XS1": 40, "XS2": 45, "XS3": 50},
-    "S6":  {"X0": 20, "XC1": 25, "XC2": 35, "XC3": 35, "XC4": 40,
-            "XD1": 45, "XD2": 50, "XD3": 55, "XS1": 45, "XS2": 50, "XS3": 55},
-}
-
-
 # =============================================================================
 # Dataclass pour décrire un groupe de barres
 # =============================================================================
@@ -350,6 +329,8 @@ class SecMatRC:
         # --- Enrobages et diamètres ---
         self._cnom: Optional[float] = None          # mm, enrobage nominal
         self._cnom_top: Optional[float] = None      # mm, enrobage nominal sup (si différent)
+        self._cnom_left: Optional[float] = None      # mm, enrobage nominal gauche (si différent)
+        self._cnom_right: Optional[float] = None      # mm, enrobage nominal droite (si différent)
         self._phi_l: Optional[int] = None           # mm, diamètre armatures longitudinales
         self._phi_t: Optional[int] = None           # mm, diamètre armatures transversales
 
@@ -460,6 +441,24 @@ class SecMatRC:
         self._cnom_top = value
 
     @property
+    def cnom_left(self) -> Optional[float]:
+        """Enrobage nominal côté comprimé (mm). Si None, utilise cnom."""
+        return self._cnom_left
+
+    @cnom_left.setter
+    def cnom_left(self, value: float) -> None:
+        self._cnom_left = value
+
+    @property
+    def cnom_right(self) -> Optional[float]:
+        """Enrobage nominal côté comprimé (mm). Si None, utilise cnom."""
+        return self._cnom_right
+
+    @cnom_right.setter
+    def cnom_right(self, value: float) -> None:
+        self._cnom_right = value
+
+    @property
     def phi_l(self) -> Optional[int]:
         """Diamètre des armatures longitudinales (mm)."""
         return self._phi_l
@@ -511,17 +510,7 @@ class SecMatRC:
             )
         self._structural_class = value
 
-    @property
-    def cmin_dur(self) -> Optional[int]:
-        """Enrobage minimal de durabilité cmin,dur (mm) — EC2 Tableau 4.4N."""
-        if self._exposure_class is None:
-            return None
-        return CNOM_MIN_TABLE.get(self._structural_class, {}).get(
-            self._exposure_class, None
-        )
-
-    def get_cmin_dur_ref(self) -> str:
-        return "EC2 — Tableau 4.4N"
+    # Enrobage not implemented yet, but can be added similarly to cnom and cnom_top if needed.
 
     # =================================================================
     # Armatures : double mode (section directe ou RebarSet)
@@ -675,7 +664,6 @@ class SecMatRC:
     def alpha_eq_short(self) -> float:
         """
         Coefficient d'équivalence court terme : αe = Es / Ecm.
-
         Ref: EC2 §5.4(2)
         """
         return self._mat_s.Es / self._mat_c.Ecm
@@ -684,8 +672,7 @@ class SecMatRC:
     def alpha_eq_long(self) -> Optional[float]:
         """
         Coefficient d'équivalence long terme : αe,lt = Es / (Ecm / (1 + φ)).
-
-        Ref: EC2 §5.4(2) — prise en compte simplifiée du fluage.
+        Ref: EC2 §5.4(2)
         Retourne None si phi_fluage non renseigné.
         """
         if self._phi_fluage is None:
@@ -693,28 +680,51 @@ class SecMatRC:
         Ec_eff = self._mat_c.Ecm / (1.0 + self._phi_fluage)
         return self._mat_s.Es / Ec_eff
 
-    def get_alpha_eq_short_formula(self, with_values: bool = False) -> str:
+    def get_alpha_eq_short(self, with_values: bool = False) -> FormulaResult:
+        """FormulaResult pour αe — EC2 §5.4(2)."""
+        r = self.alpha_eq_short
+        fv = ""
         if with_values:
-            return (f"αe = Es / Ecm = {self._mat_s.Es:.0f} / "
-                    f"{self._mat_c.Ecm:.0f} = {self.alpha_eq_short:.2f}")
-        return "αe = Es / Ecm"
+            fv = (f"αe = Es / Ecm = {self._mat_s.Es:.0f} / "
+                f"{self._mat_c.Ecm:.0f} = {r:.2f}")
+        return FormulaResult(
+            name="αe",
+            formula="αe = Es / Ecm",
+            formula_values=fv,
+            result=r,
+            unit="-",
+            ref="EC2 — §5.4(2)",
+        )
 
-    def get_alpha_eq_long_formula(self, with_values: bool = False) -> str:
-        if with_values and self._phi_fluage is not None:
+    def get_alpha_eq_long(self, with_values: bool = False) -> FormulaResult:
+        """FormulaResult pour αe,lt — EC2 §5.4(2)."""
+        r = self.alpha_eq_long  # None si phi absent
+        fv = ""
+        if with_values and r is not None:
             Ec_eff = self._mat_c.Ecm / (1.0 + self._phi_fluage)
-            return (f"αe,lt = Es / (Ecm / (1+φ)) = {self._mat_s.Es:.0f} / "
-                    f"({self._mat_c.Ecm:.0f} / (1+{self._phi_fluage:.2f})) = "
-                    f"{self._mat_s.Es:.0f} / {Ec_eff:.0f} = "
-                    f"{self.alpha_eq_long:.2f}")
-        return "αe,lt = Es / (Ecm / (1 + φ))"
+            fv = (f"αe,lt = Es / (Ecm / (1+φ)) = {self._mat_s.Es:.0f} / "
+                f"({self._mat_c.Ecm:.0f} / (1+{self._phi_fluage:.2f})) "
+                f"= {self._mat_s.Es:.0f} / {Ec_eff:.0f} = {r:.2f}")
+        return FormulaResult(
+            name="αe,lt",
+            formula="αe,lt = Es / (Ecm / (1 + φ))",
+            formula_values=fv,
+            result=r if r is not None else float('nan'),
+            unit="-",
+            ref="EC2 — §5.4(2)",
+        )
 
-    @property
-    def alpha_eq_short_ref(self) -> str:
-        return "EC2 — §5.4(2)"
+    def report_equivalence(self, with_values: bool = True) -> FormulaCollection:
+        """FormulaCollection — coefficients d'équivalence."""
+        fc = FormulaCollection(
+            title="Coefficients d'équivalence acier/béton",
+            ref="EC2 — §5.4(2)",
+        )
+        fc.add(self.get_alpha_eq_short(with_values=with_values))
+        if self._phi_fluage is not None:
+            fc.add(self.get_alpha_eq_long(with_values=with_values))
+        return fc
 
-    @property
-    def alpha_eq_long_ref(self) -> str:
-        return "EC2 — §5.4(2)"
 
     # =================================================================
     # Compute d from covers
@@ -936,24 +946,6 @@ class SecMatRC:
         print(f"\n{'='*70}\n")
 
     @staticmethod
-    def print_cnom_table() -> None:
-        """Affiche le tableau cmin,dur (EC2 Tableau 4.4N)."""
-        exposures = ["X0", "XC1", "XC2", "XC3", "XC4",
-                     "XD1", "XD2", "XD3", "XS1", "XS2", "XS3"]
-        print(f"\n{'='*90}")
-        print(f"  cmin,dur (mm) — EC2 Tableau 4.4N")
-        print(f"{'='*90}")
-        header = "       │ " + " │ ".join(f"{e:>4s}" for e in exposures)
-        print(header)
-        print("  " + "─" * 86)
-        for sc in ["S1", "S2", "S3", "S4", "S5", "S6"]:
-            vals = " │ ".join(
-                f"{CNOM_MIN_TABLE[sc].get(e, '--'):>4}" for e in exposures
-            )
-            print(f"  {sc:3s}  │ {vals}")
-        print(f"{'='*90}\n")
-
-    @staticmethod
     def print_rebar_areas() -> None:
         """Affiche le tableau des aires unitaires des barres HA."""
         print(f"\n{'='*50}")
@@ -1038,7 +1030,6 @@ if __name__ == "__main__":
     # --- Affichage des tableaux ---
     SecMatRC.print_exposure_classes()
     SecMatRC.print_structural_classes()
-    SecMatRC.print_cnom_table()
     SecMatRC.print_rebar_areas()
 
     # --- Simulation sans imports réels ---
